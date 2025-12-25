@@ -1,0 +1,13 @@
+# ml_system/requirements_minimal.txt
+# Core ML (REQUIRED)
+scikit-learn>=1.3.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Advanced Models (OPTIONAL - better performance)
+xgboost>=2.0.0
+lightgbm>=4.0.0
+
+# Utilities (REQUIRED)
+loguru>=0.7.0
+joblib>=1.3.0

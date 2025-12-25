@@ -1,0 +1,226 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": "PostgreSQL",
+      "description": "Monthly trading calendar with daily P&L and weekly summaries",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 20,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "cellHeight": "sm",
+        "cellValues": {
+          "unit": "currencyUSD"
+        },
+        "showValue": "always"
+      },
+      "pluginVersion": "9.0.0",
+      "targets": [
+        {
+          "format": "table",
+          "group": [],
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "WITH daily_trades AS (\n  SELECT \n    DATE(closed_at) as trade_date,\n    SUM(pnl) as daily_pnl,\n    COUNT(*) as trade_count\n  FROM trade_executions\n  WHERE \n    status = 'closed'\n    AND closed_at >= DATE_TRUNC('month', CURRENT_DATE)\n    AND closed_at < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'\n  GROUP BY DATE(closed_at)\n),\nweekly_summary AS (\n  SELECT \n    DATE_TRUNC('week', DATE(closed_at)) as week_start,\n    SUM(pnl) as weekly_pnl,\n    COUNT(*) as weekly_trades\n  FROM trade_executions\n  WHERE \n    status = 'closed'\n    AND closed_at >= DATE_TRUNC('month', CURRENT_DATE)\n    AND closed_at < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'\n  GROUP BY week_start\n)\nSELECT \n  dt.trade_date,\n  dt.daily_pnl,\n  dt.trade_count,\n  ws.weekly_pnl,\n  ws.weekly_trades,\n  EXTRACT(DOW FROM dt.trade_date) as day_of_week\nFROM daily_trades dt\nLEFT JOIN weekly_summary ws ON DATE_TRUNC('week', dt.trade_date) = ws.week_start\nORDER BY dt.trade_date",
+          "refId": "A",
+          "select": [
+            [
+              {
+                "params": ["*"],
+                "type": "column"
+              }
+            ]
+          ],
+          "table": "trade_executions",
+          "timeColumn": "closed_at",
+          "where": []
+        }
+      ],
+      "title": "Monthly Trading Calendar",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "indexByName": {
+              "trade_date": 0,
+              "daily_pnl": 1,
+              "trade_count": 2,
+              "day_of_week": 3,
+              "weekly_pnl": 4,
+              "weekly_trades": 5
+            },
+            "renameByName": {
+              "trade_date": "Date",
+              "daily_pnl": "Daily P&L",
+              "trade_count": "Trades",
+              "weekly_pnl": "Week P&L",
+              "weekly_trades": "Week Trades"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": "PostgreSQL",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "center",
+            "displayMode": "color-background"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 100
+              }
+            ]
+          },
+          "unit": "currencyUSD"
+        }
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "id": 2,
+      "options": {
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "9.0.0",
+      "targets": [
+        {
+          "format": "table",
+          "group": [],
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT \n  EXTRACT(WEEK FROM closed_at) as week_number,\n  DATE_TRUNC('week', closed_at)::date as week_start,\n  COUNT(*) as total_trades,\n  SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winning_trades,\n  SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losing_trades,\n  SUM(pnl) as total_pnl,\n  AVG(pnl) as avg_pnl,\n  MAX(pnl) as best_trade,\n  MIN(pnl) as worst_trade,\n  ROUND(100.0 * SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) / COUNT(*), 2) as win_rate\nFROM trade_executions\nWHERE \n  status = 'closed'\n  AND closed_at >= DATE_TRUNC('month', CURRENT_DATE)\n  AND closed_at < DATE_TRUNC('month', CURRENT_DATE) + INTERVAL '1 month'\nGROUP BY week_number, week_start\nORDER BY week_start",
+          "refId": "A",
+          "select": [
+            [
+              {
+                "params": ["*"],
+                "type": "column"
+              }
+            ]
+          ],
+          "table": "trade_executions",
+          "timeColumn": "closed_at",
+          "where": []
+        }
+      ],
+      "title": "Weekly Summary",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "indexByName": {},
+            "renameByName": {
+              "week_number": "Week #",
+              "week_start": "Week Start",
+              "total_trades": "Total Trades",
+              "winning_trades": "Wins",
+              "losing_trades": "Losses",
+              "total_pnl": "Total P&L",
+              "avg_pnl": "Avg P&L",
+              "best_trade": "Best Trade",
+              "worst_trade": "Worst Trade",
+              "win_rate": "Win Rate %"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 27,
+  "style": "dark",
+  "tags": ["trading", "calendar", "monthly"],
+  "templating": {
+    "list": [
+      {
+        "allValue": null,
+        "current": {
+          "selected": false,
+          "text": "2025-01",
+          "value": "2025-01"
+        },
+        "datasource": "PostgreSQL",
+        "definition": "SELECT DISTINCT TO_CHAR(closed_at, 'YYYY-MM') as month FROM trade_executions WHERE status = 'closed' ORDER BY month DESC",
+        "description": null,
+        "error": null,
+        "hide": 0,
+        "includeAll": false,
+        "label": "Month",
+        "multi": false,
+        "name": "selected_month",
+        "options": [],
+        "query": "SELECT DISTINCT TO_CHAR(closed_at, 'YYYY-MM') as month FROM trade_executions WHERE status = 'closed' ORDER BY month DESC",
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 0,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Binance Bot - Monthly Calendar",
+  "uid": "binance-calendar",
+  "version": 0
+}

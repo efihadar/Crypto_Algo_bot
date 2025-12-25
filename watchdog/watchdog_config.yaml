@@ -1,0 +1,25 @@
+containers:
+  trading_bot:
+    max_silence: 90          # שניות בלי לוגים
+    max_cpu_pct: 60          # CPU %
+    max_mem_pct: 70          # RAM %
+    max_api_errors: 5        # רצף שגיאות API
+    max_no_positions_minutes: 120
+    max_no_balance_change_minutes: 180
+
+  telegram_reporter:
+    max_silence: 300
+    max_api_errors: 3
+
+  postgres_db:
+    max_silence: 60
+    restart_on_unhealthy: true
+
+database:
+  enabled: true
+  metrics_interval_minutes: 5
+
+alerts:
+  telegram_enabled: true
+  chat_id: "${TELEGRAM_CHAT_ID}"
+  token: "${TELEGRAM_BOT_TOKEN}"
