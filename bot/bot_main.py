@@ -521,70 +521,71 @@ def round_quantity(quantity: float, symbol: str) -> float:
 # ============================================================
 # 🎯 HYBRID POSITION SIZING - ENHANCED
 # ============================================================
-def calculate_dynamic_position_size(
-    symbol: str,
-    balance: float,
-    equity: float,
-    entry_price: float,
-    signal: Dict[str, Any],
-) -> float:
+def calculate_dynamic_position_size(symbol: str, balance: float, equity: float, entry_price: float, signal: Dict[str, Any]) -> float:
     """
     Calculate dynamic position size with comprehensive risk management.
-    Now includes fee-aware net calculations, regime adjustments, and strength-based overrides.
+    Fully aligned with EnhancedRiskManager and INI configuration.
+    Uses fee-aware net calculations, regime adjustments, and strength-based overrides.
+    Risk percentage is primary driver; all other factors only increase size (never dilute risk).
     """
     try:
+        # Early validation
+        if not symbol or not isinstance(signal, dict):
+            logger.error(f"❌ Invalid input for {symbol}: missing symbol or invalid signal")
+            return 0.0
+
         cfg = loader
         section = "risk_management"
 
-        # Load configuration values
-        base_usdt = cfg.get(section, "POSITION_SIZE_USDT", 5.0, float)
-        min_usdt = cfg.get(section, "MIN_POSITION_USDT", 5.0, float)
-        max_usdt = cfg.get(section, "MAX_POSITION_USDT", 20.0, float)
-        risk_pct = cfg.get(section, "RISK_PER_TRADE_PCT", 0.5, float) / 100.0
-        max_balance_fraction = cfg.get(section, "MAX_BALANCE_FRACTION", 0.30, float)
-        min_notional_usdt = cfg.get(section, "MIN_NOTIONAL_USDT", 8.0, float)
+        # Load ALL values from INI to ensure full alignment
+        base_usdt = max(0.0, cfg.get(section, "POSITION_SIZE_USDT", 35.0, float))
+        min_usdt = max(0.0, cfg.get(section, "MIN_POSITION_USDT", 20.0, float))
+        max_usdt = max(min_usdt, cfg.get(section, "MAX_POSITION_USDT", 50.0, float))
+        risk_pct = max(0.0, cfg.get(section, "RISK_PER_TRADE_PCT", 2.0, float)) / 100.0
+        max_balance_fraction = max(0.0, min(1.0, cfg.get(section, "MAX_BALANCE_FRACTION", 0.85, float)))
+        min_notional_usdt = max(0.0, cfg.get(section, "MIN_NOTIONAL_USDT", 6.0, float))
 
-        # Extract side from signal
+        # Extract side
         side = (signal.get("side") or "").upper()
+        if side not in ("BUY", "SELL"):
+            logger.warning(f"⚠️ Invalid side '{side}' for {symbol} - blocking trade")
+            return 0.0
 
-        # Use higher of balance or equity
-        effective_balance = max(balance, equity)
+        # Use EQUITY for conservative risk calculation (NOT max(balance, equity))
+        effective_balance = equity
+        if effective_balance <= 0:
+            logger.warning(f"⚠️ Insufficient equity ({effective_balance:.2f}) for {symbol}")
+            return 0.0
 
         # Check minimum balance requirement
         min_balance_needed = min_usdt / max_balance_fraction if max_balance_fraction > 0 else min_usdt
         if effective_balance < min_balance_needed:
             logger.warning(
-                f"⚠️ Balance too low for safe trade on {symbol} "
-                f"(balance={effective_balance:.2f}, min_needed={min_balance_needed:.2f})"
+                f"⚠️ Equity too low for safe trade on {symbol} "
+                f"(equity={effective_balance:.2f}, min_needed={min_balance_needed:.2f})"
             )
             return 0.0
 
         # ------------------------------------------------------
-        # 1) Start with base position size
+        # 1) PRIMARY DRIVER: Risk Percentage (INI: RISK_PER_TRADE_PCT)
         # ------------------------------------------------------
-        target_usdt = base_usdt
+        target_usdt = effective_balance * risk_pct if risk_pct > 0 else base_usdt
 
         # ------------------------------------------------------
-        # 2) Blend with risk percentage
+        # 2) Apply Adaptive Position Size from RiskManager (if available)
         # ------------------------------------------------------
-        if risk_pct > 0:
-            pct_usdt = effective_balance * risk_pct
-            target_usdt = 0.5 * target_usdt + 0.5 * pct_usdt
-
-        # ------------------------------------------------------
-        # 3) Apply adaptive risk adjustment if available
-        # ------------------------------------------------------
-        if risk and hasattr(risk, "get_adaptive_position_size"):
+        if 'risk' in globals() and risk and hasattr(risk, "get_adaptive_position_size"):
             try:
-                adaptive = risk.get_adaptive_position_size(symbol)
-                if adaptive and adaptive > 0:
-                    target_usdt = 0.5 * target_usdt + 0.5 * float(adaptive)
-                    logger.debug(f"🔍 Adaptive size blended for {symbol}: {adaptive}")
+                adaptive = risk.get_adaptive_position_size(symbol, signal)  # ← Now uses your EnhancedRiskManager
+                if isinstance(adaptive, (int, float)) and adaptive > 0:
+                    # Only allow adaptive size to INCREASE the position (never reduce below risk_pct baseline)
+                    target_usdt = max(target_usdt, float(adaptive))
+                    logger.debug(f"🔍 Adaptive size applied for {symbol}: ${adaptive:.2f} → new target: ${target_usdt:.2f}")
             except Exception as e:
                 logger.debug(f"Adaptive sizing failed for {symbol}: {e}")
 
         # ------------------------------------------------------
-        # 4) Apply signal strength multiplier & override
+        # 3) Apply Signal Strength Multiplier (ONLY increases size)
         # ------------------------------------------------------
         try:
             strength = float(signal.get("strength", 0) or 0.0)
@@ -592,30 +593,32 @@ def calculate_dynamic_position_size(
             strength = 0.0
 
         if strength > 0:
-            # Normalize strength to 0-1 range, then scale to 0.5-1.5 multiplier
+            # Normalize strength to 0-1 range, then scale multiplier from 1.0 to 1.5 (only upward adjustment)
             norm = max(0.0, min(strength, 100.0)) / 100.0
-            factor = 0.5 + norm  # Range: 0.5 to 1.5
+            factor = 1.0 + (norm * 0.5)  # Range: 1.0 to 1.5
+            original_target = target_usdt
             target_usdt *= factor
 
             logger.debug(
-                f"💡 Signal strength adjust for {symbol}: strength={strength:.1f}, factor={factor:.2f}"
+                f"💡 Signal strength boost for {symbol}: strength={strength:.1f}, factor={factor:.2f} "
+                f"→ {original_target:.2f} → {target_usdt:.2f}"
             )
 
         # ------------------------------------------------------
-        # 5) Apply regime-based adjustments if available
+        # 4) Apply Regime-Based Adjustments (if available)
         # ------------------------------------------------------
-        if regime_detector and hasattr(regime_detector, 'detect_regime'):
+        if 'regime_detector' in globals() and regime_detector and hasattr(regime_detector, 'detect_regime'):
             try:
                 regime = regime_detector.detect_regime(symbol)
-                adjustments = regime_detector.get_regime_adjustments(regime)
-                size_mult = adjustments.get("position_size_mult", 1.0)
+                adjustments = regime_detector.get_regime_adjustments(regime) or {}
+                size_mult = float(adjustments.get("position_size_mult", 1.0))
                 
-                original_target = target_usdt
-                target_usdt *= size_mult
-                
-                if size_mult != 1.0:
+                if size_mult > 1.0:  # Only allow regime to INCREASE size (not decrease)
+                    original_target = target_usdt
+                    target_usdt *= size_mult
+                    
                     logger.info(
-                        f"📈 Regime adjustment for {symbol}: {regime} → size x{size_mult:.2f} "
+                        f"📈 Regime boost for {symbol}: {regime} → size x{size_mult:.2f} "
                         f"({original_target:.2f} → {target_usdt:.2f})"
                     )
                     
@@ -628,64 +631,69 @@ def calculate_dynamic_position_size(
                 logger.debug(f"Regime adjustment failed for {symbol}: {e}")
 
         # ------------------------------------------------------
-        # 6) Limit by maximum balance fraction
+        # 5) Limit by Maximum Balance Fraction
         # ------------------------------------------------------
         max_by_balance = effective_balance * max_balance_fraction
-        target_usdt = min(target_usdt, max_by_balance)
+        if target_usdt > max_by_balance:
+            logger.debug(f"📉 Capping position by balance limit: {target_usdt:.2f} → {max_by_balance:.2f}")
+            target_usdt = max_by_balance
 
         # ------------------------------------------------------
-        # 7) Enforce min/max configuration limits
+        # 6) Enforce Configuration Limits
         # ------------------------------------------------------
         target_usdt = max(min_usdt, min(target_usdt, max_usdt))
 
         # ------------------------------------------------------
-        # 8) Enforce exchange minimum (Bybit typically 5 USDT)
+        # 7) Enforce Exchange Minimum (Bybit typically 5 USDT)
         # ------------------------------------------------------
         EXCHANGE_MIN = 5.0
         if target_usdt < EXCHANGE_MIN:
-            logger.debug(
-                f"⚠️ Target ${target_usdt:.2f} below exchange minimum ${EXCHANGE_MIN:.2f} for {symbol}"
-            )
+            logger.debug(f"⚠️ Target ${target_usdt:.2f} below exchange minimum ${EXCHANGE_MIN:.2f} for {symbol}")
 
             if effective_balance < EXCHANGE_MIN:
-                logger.warning(
-                    f"⚠️ Balance ${effective_balance:.2f} too low for minimum ${EXCHANGE_MIN:.2f}"
-                )
+                logger.warning(f"⚠️ Equity ${effective_balance:.2f} too low for minimum trade size ${EXCHANGE_MIN:.2f}")
                 return 0.0
 
             target_usdt = EXCHANGE_MIN
+            logger.debug(f"✅ Set to exchange minimum: ${target_usdt:.2f}")
 
         # ------------------------------------------------------
-        # 9) Auto-boost to minimum notional if needed
+        # 8) Auto-Boost to Minimum Notional if Needed
         # ------------------------------------------------------
-        boosted = False
         if target_usdt < min_notional_usdt:
             before = target_usdt
             target_usdt = min_notional_usdt
-            boosted = True
-
             logger.info(
                 f"🟠 Auto-boost: {symbol} size {before:.2f} → {target_usdt:.2f} "
                 f"(min_notional={min_notional_usdt})"
             )
 
         # ------------------------------------------------------
-        # 10) Validate SL/TP distances if provided (FEE-AWARE)
+        # 9) Validate SL/TP Distances (FEE-AWARE)
         # ------------------------------------------------------
         stop_loss = signal.get("stop_loss", 0)
         take_profit = signal.get("take_profit", 0)
 
-        if entry_price > 0 and stop_loss > 0 and take_profit > 0 and side in ("BUY", "SELL"):
+        if entry_price > 0 and stop_loss > 0 and take_profit > 0:
 
+            # Validate logical consistency
             if side == "BUY":
+                if not (stop_loss < entry_price < take_profit):
+                    logger.warning(f"❌ Invalid price levels for BUY: SL={stop_loss}, EP={entry_price}, TP={take_profit}")
+                    return 0.0
                 gross_sl_dist_pct = ((entry_price - stop_loss) / entry_price) * 100
                 gross_tp_dist_pct = ((take_profit - entry_price) / entry_price) * 100
-            else:
+            elif side == "SELL":
+                if not (take_profit < entry_price < stop_loss):
+                    logger.warning(f"❌ Invalid price levels for SELL: TP={take_profit}, EP={entry_price}, SL={stop_loss}")
+                    return 0.0
                 gross_sl_dist_pct = ((stop_loss - entry_price) / entry_price) * 100
                 gross_tp_dist_pct = ((entry_price - take_profit) / entry_price) * 100
+            else:
+                return 0.0
 
-            # Load fees
-            taker_fee_pct = cfg.get("fees", "TAKER_FEE_PCT", 0.06, float)
+            # Load fees from INI
+            taker_fee_pct = max(0.0, cfg.get("fees", "TAKER_FEE_PCT", 0.06, float))
             total_fees_pct = taker_fee_pct * 2  # Open + Close
 
             # Calculate NET distances after fees
@@ -697,11 +705,12 @@ def calculate_dynamic_position_size(
                 f"After Fees ({total_fees_pct:.3f}%): Net SL: {net_sl_dist_pct:.3f}%, Net TP: {net_tp_dist_pct:.3f}%"
             )
 
-            # Load configurable minimums
-            min_sl_pct = cfg.get("trading", "MIN_SL_PCT", 0.3, float)
-            min_net_sl_pct = cfg.get("trading", "MIN_NET_SL_PCT", 0.15, float)
-            min_tp_pct = cfg.get("trading", "MIN_TP_PCT", 0.6, float)
-            min_net_tp_pct = cfg.get("trading", "MIN_NET_TP_PCT", 0.5, float)
+            # Load configurable minimums from INI
+            min_sl_pct = max(0.0, cfg.get("trading", "MIN_SL_PCT", 0.6, float))
+            min_net_sl_pct = max(0.0, cfg.get("trading", "MIN_NET_SL_PCT", 0.12, float))
+            min_tp_pct = max(0.0, cfg.get("trading", "MIN_TP_PCT", 1.2, float))
+            min_net_tp_pct = max(0.0, cfg.get("trading", "MIN_NET_TP_PCT", 0.30, float))
+            min_rr = max(0.0, cfg.get("trading", "MIN_RR_RATIO", 1.4, float))
 
             # Allow tighter stops for stronger signals (Smart Override)
             if strength >= 95:
@@ -716,15 +725,11 @@ def calculate_dynamic_position_size(
 
             # Validate MINIMUM GROSS distances
             if gross_sl_dist_pct < min_sl_pct:
-                logger.warning(
-                    f"❌ {symbol}: Gross SL too tight ({gross_sl_dist_pct:.2f}% < {min_sl_pct}%) - blocking trade"
-                )
+                logger.warning(f"❌ {symbol}: Gross SL too tight ({gross_sl_dist_pct:.2f}% < {min_sl_pct}%) - blocking trade")
                 return 0.0
 
             if gross_tp_dist_pct < min_tp_pct:
-                logger.warning(
-                    f"❌ {symbol}: Gross TP too close ({gross_tp_dist_pct:.2f}% < {min_tp_pct}%) - blocking trade"
-                )
+                logger.warning(f"❌ {symbol}: Gross TP too close ({gross_tp_dist_pct:.2f}% < {min_tp_pct}%) - blocking trade")
                 return 0.0
 
             # Validate MINIMUM NET distances (after fees)
@@ -744,8 +749,7 @@ def calculate_dynamic_position_size(
 
             # Validate Risk/Reward ratio (using NET values)
             rr_ratio = net_tp_dist_pct / net_sl_dist_pct if net_sl_dist_pct > 0 else 0
-            min_rr = cfg.get("trading", "MIN_RR_RATIO", 1.5, float)
-            
+
             if rr_ratio < min_rr:
                 logger.warning(
                     f"❌ {symbol}: Poor NET R:R ({rr_ratio:.2f} < {min_rr}) after fees - blocking trade | "
@@ -754,35 +758,28 @@ def calculate_dynamic_position_size(
                 return 0.0
 
         # ------------------------------------------------------
-        # 11) Verify boosted size doesn't exceed limits
+        # 10) Final Sanity Checks
         # ------------------------------------------------------
         max_allowed = effective_balance * max_balance_fraction
         if target_usdt > max_allowed:
-            logger.warning(
-                f"⚠️ Boosted size ${target_usdt:.2f} exceeds max allowed ${max_allowed:.2f}"
-            )
+            logger.warning(f"⚠️ Size ${target_usdt:.2f} exceeds max allowed ${max_allowed:.2f} for {symbol}")
             return 0.0
 
-        # ------------------------------------------------------
-        # 12) Final sanity check against total balance
-        # ------------------------------------------------------
         if target_usdt > effective_balance:
-            logger.error(
-                f"❌ Position size ${target_usdt:.2f} exceeds total balance "
-                f"${effective_balance:.2f} - blocking trade"
-            )
+            logger.error(f"❌ Position size ${target_usdt:.2f} exceeds equity ${effective_balance:.2f} - blocking trade")
             return 0.0
 
         if target_usdt <= 0:
+            logger.debug(f"ℹ️ Final calculated size is non-positive: {target_usdt:.2f}")
             return 0.0
 
         final_size = round(target_usdt, 2)
         logger.info(f"✅ Approved position size for {symbol}: ${final_size:.2f}")
         return final_size
-        
+
     except Exception as e:
-        logger.error(f"❌ Position size calculation failed for {symbol}: {e}")
-        logger.exception(e)
+        logger.error(f"❌ Position size calculation FAILED for {symbol}: {str(e)}")
+        logger.exception("Full traceback:")
         return 0.0
 
 # ============================================================
@@ -1201,7 +1198,7 @@ def initialize_bot() -> bool:
         
         # Summary of advanced managers
         logger.info("")
-        logger.info("📊 Advanced Managers Status:")
+        logger.success("📊 Advanced Managers Status:")
         logger.info(f"   Correlation:  {'✅ Active' if correlation_manager else '❌ Inactive'}")
         logger.info(f"   Time Stops:   {'✅ Active' if time_stop_manager else '❌ Inactive'}")
         logger.info(f"   Regime:       {'✅ Active' if regime_detector else '❌ Inactive'}")
@@ -1218,7 +1215,7 @@ def initialize_bot() -> bool:
 
         if num_accounts == 1:
             acc = all_accounts[0]
-            logger.info(f"   📊 Active Account: {acc['name']}")
+            logger.info(f"📊 Active Account: {acc['name']}")
         else:
             logger.info(f"   📊 Active Accounts: {num_accounts}")
 
@@ -2013,6 +2010,7 @@ def _execute_trade_internal(signal: Dict[str, Any], is_momentum: bool = False) -
                 use_ml = cfg.get("machine_learning", "USE_ML_PREDICTIONS", True, bool)
                 
                 if use_ml:
+                    logger.info("🧠 ML System ACTIVE — applying ML enhancements to stops...")
                     logger.info("🤖 Applying ML enhancements to stops...")
                     
                     try:
@@ -2431,9 +2429,9 @@ def run_trading_cycle():
             logger.warning(f"🛑 Circuit breaker active — skipping cycle ({remaining}s remaining)")
             return
 
-        logger.info("─" * 70)
+        logger.info("=" * 70)
         logger.info(f"🔄 Starting Trading Cycle #{cycle_count + 1}")
-        logger.info("─" * 70)
+        logger.info("=" * 70)
 
         # --- Update Symbols List Periodically ---
         if current_time - LAST_SYMBOLS_UPDATE > UPDATE_INTERVAL:
@@ -2478,6 +2476,33 @@ def run_trading_cycle():
             balance = float(account.get("balance", 0) or 0)
             equity = float(account.get("equity", 0) or 0)
             logger.info(f"💰 Account Status: Balance=${balance:.2f}, Equity=${equity:.2f}")
+
+            # 💾 Record account metrics to DB for reporting
+            try:
+                from db_utils import record_metrics
+                
+                profit = equity - balance
+                margin = float(account.get("margin", 0) or 0)
+                free_margin = float(account.get("free_margin", 0) or 0)
+                margin_level = float(account.get("margin_level", 0) or 0)
+
+                success = record_metrics(
+                    balance=balance,
+                    equity=equity,
+                    profit=profit,
+                    margin=margin,
+                    free_margin=free_margin,
+                    margin_level=margin_level
+                )
+                
+                if success:
+                    logger.debug("✅ Account metrics recorded to database")
+                else:
+                    logger.warning("⚠️ Failed to record account metrics to DB")
+
+            except Exception as e:
+                logger.error(f"❌ Exception while recording account metrics: {e}")
+
         except Exception as e:
             logger.error(f"❌ Failed to fetch account info: {e}")
             return
@@ -2613,10 +2638,13 @@ def run_trading_cycle():
                         logger.error(f"❌ Regime adjustment failed for {sig_symbol}: {e}")
 
                 # 🛡️ Risk Capacity Check (Using internal attributes)
-                max_pos = 5
-                if risk and hasattr(risk, 'max_positions'):
-                    max_pos = risk.max_positions
-                
+                max_pos = 2
+                if risk:
+                    if hasattr(risk, 'max_total_positions'):
+                        max_pos = risk.max_total_positions
+                    elif hasattr(risk, 'config'):
+                        max_pos = risk.config.get("risk_management", "MAX_TOTAL_POSITIONS", 2, int)
+
                 current_pos_count = len(order_manager.active_orders)
                 if current_pos_count >= max_pos:
                     logger.info(f"⏭️ Portfolio full ({current_pos_count}/{max_pos}). Skipping {sig_symbol}")
@@ -2652,7 +2680,7 @@ def run_trading_cycle():
                     success_order = order_manager.place_order_with_protection(
                         symbol=sig_symbol,
                         side=side,
-                        quantity=calc_qty, # <--- Now sending a real number
+                        quantity=calc_qty,
                         entry_price=entry_price,
                         stop_loss=signal.get('stop_loss', 0),
                         take_profit=signal.get('take_profit', 0),
@@ -2817,6 +2845,7 @@ def main_loop():
 
         # Periodic ML Report (after loop ends or during)
         if ml_manager and hasattr(ml_manager, 'enabled') and ml_manager.enabled:
+            logger.info("🧠 ML System is ENABLED — generating performance report...")
             try:
                 stats = ml_manager.get_model_stats()
                 

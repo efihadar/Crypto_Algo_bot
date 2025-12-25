@@ -1,7 +1,6 @@
 # data_feeds.py
 """
-📊 Data Feeds Module - Bybit Market Data Provider
-
+Data Feeds Module - Bybit Market Data Provider
 Provides market data fetching for USDT Perpetual contracts:
 - Kline/Candlestick data
 - Current prices
@@ -217,13 +216,6 @@ class CacheManager:
     def get(self, key: str, ttl: int = 60) -> Optional[Any]:
         """
         Get cached value if not expired.
-        
-        Args:
-            key: Cache key
-            ttl: Time-to-live in seconds
-            
-        Returns:
-            Cached value or None if expired/missing
         """
         with self._lock:
             if key in self._cache:
@@ -328,23 +320,9 @@ def normalize_symbol(symbol: str) -> str:
         s += "USDT"
     return s
 
-def _make_request_with_retry(
-    func,
-    *args,
-    max_retries: int = None,
-    retry_delay: float = None,
-    **kwargs
-) -> Optional[Dict]:
+def _make_request_with_retry(func,*args,max_retries: int = None,retry_delay: float = None,**kwargs) -> Optional[Dict]:
     """
     Execute API request with retry logic.
-    
-    Args:
-        func: API function to call
-        max_retries: Maximum retry attempts
-        retry_delay: Delay between retries in seconds
-        
-    Returns:
-        API response dict or None on failure
     """
     max_retries = max_retries or BybitConfig.MAX_RETRIES
     retry_delay = retry_delay or BybitConfig.RETRY_DELAY
@@ -379,12 +357,7 @@ def _make_request_with_retry(
 # ============================================================
 # 📈 KLINES (USDT PERPETUAL / LINEAR)
 # ============================================================
-def get_candles(
-    symbol: str,
-    limit: int = 200,
-    interval: str = "15",
-    use_cache: bool = True,
-) -> Optional[pd.DataFrame]:
+def get_candles(symbol: str,limit: int = 200,interval: str = "15",use_cache: bool = True,) -> Optional[pd.DataFrame]:
     """
     Fetch kline/candlestick data from Bybit.
     
@@ -459,12 +432,7 @@ def get_candles(
         logger.error(f"❌ get_candles error for {symbol}: {e}")
         return None
 
-def get_market_data(
-    symbol: str,
-    count: int = 200,
-    timeframe: str = "15m",
-    use_cache: bool = True,
-) -> Optional[pd.DataFrame]:
+def get_market_data(symbol: str,count: int = 200,timeframe: str = "15m",use_cache: bool = True,) -> Optional[pd.DataFrame]:
     """
     Convenience wrapper that accepts human-readable timeframe.
     
@@ -490,11 +458,7 @@ def get_market_data(
 
     return df
 
-def get_multi_timeframe_data(
-    symbol: str,
-    timeframes: List[str] = None,
-    count: int = 100,
-) -> Dict[str, Optional[pd.DataFrame]]:
+def get_multi_timeframe_data(symbol: str,timeframes: List[str] = None,count: int = 100,) -> Dict[str, Optional[pd.DataFrame]]:
     """
     Fetch data for multiple timeframes at once.
     

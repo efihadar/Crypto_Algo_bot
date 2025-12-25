@@ -18,7 +18,8 @@ class MLConfig:
     # MASTER SWITCHES
     # ═══════════════════════════════════════════════════════════
     enabled: bool = True
-    use_ml_predictions: bool = True  # New from your INI
+    use_ml_predictions: bool = True
+    enable_execution_filter: bool = True
 
     # ═══════════════════════════════════════════════════════════
     # PATHS — Auto-resolved
@@ -221,6 +222,7 @@ class MLConfig:
             instance = cls(
                 enabled=get('ENABLED', True, bool),
                 use_ml_predictions=get('USE_ML_PREDICTIONS', True, bool),
+                enable_execution_filter=get('ENABLE_ML_EXECUTION_FILTER', True, bool),
                 model_type=get('MODEL_TYPE', 'random_forest', str),
                 min_samples_to_train=get('MIN_TRAINING_SAMPLES', 100, int),
                 min_model_accuracy=get('MIN_MODEL_ACCURACY', 0.55, float),

@@ -58,7 +58,7 @@ class BybitSession:
         self._ticker_cache_ttl: int = 10
 
         logger.success("✅ BybitSession initialized for USDT Perpetual (linear)")
-        logger.info(f"  ⏰ recv_window: 20000ms (20s) - handles clock drift up to ±10s")
+        logger.info(f"⏰ recv_window: 20000ms (20s) - handles clock drift up to ±10s")
 
     # =====================================================
     # 🔢 HELPER: Format price as string for API

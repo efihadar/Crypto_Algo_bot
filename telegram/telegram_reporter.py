@@ -459,7 +459,7 @@ class TelegramReporter:
                         '''
                         SELECT balance, equity, profit, margin, free_margin, "timestamp"
                         FROM account_metrics
-                        ORDER BY "timestamp" DESC
+                        ORDER BY id DESC
                         LIMIT 1
                         '''
                     )
@@ -510,7 +510,7 @@ class TelegramReporter:
                         '''
                         SELECT symbol, direction, entry_price, size, created_at
                         FROM trade_executions
-                        WHERE status = 'opened'
+                        WHERE status IN ('opened', 'open', 'active')
                         ORDER BY created_at DESC
                         '''
                     )
@@ -544,8 +544,9 @@ class TelegramReporter:
                             SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) AS losses,
                             COALESCE(SUM(pnl), 0) AS total_pnl
                         FROM trade_executions
-                        WHERE DATE(created_at) = CURRENT_DATE
-                          AND status = 'closed'
+                        WHERE created_at >= (NOW() AT TIME ZONE 'Asia/Jerusalem')::date
+                        AND created_at < ((NOW() AT TIME ZONE 'Asia/Jerusalem')::date + INTERVAL '1 day')
+                        AND status = 'closed'
                         '''
                     )
                     r = cur.fetchone()
@@ -739,8 +740,8 @@ class TelegramReporter:
                             SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) AS losses,
                             COALESCE(SUM(pnl), 0) AS total_pnl
                         FROM trade_executions
-                        WHERE created_at >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '%s minutes')
-                          AND status = 'closed'
+                        WHERE created_at >= (NOW() AT TIME ZONE 'Asia/Jerusalem' - INTERVAL '%s minutes')
+                        AND status = 'closed'
                         ''',
                         (minutes,),
                     )
@@ -776,7 +777,7 @@ class TelegramReporter:
                         '''
                         SELECT COUNT(*)
                         FROM trade_executions
-                        WHERE created_at >= (NOW() AT TIME ZONE 'UTC' - INTERVAL '%s minutes')
+                        WHERE created_at >= (NOW() AT TIME ZONE 'Asia/Jerusalem' - INTERVAL '%s minutes')
                         ''',
                         (minutes,),
                     )
@@ -851,7 +852,8 @@ class TelegramReporter:
                             AVG(ABS(predicted_sl_pct - actual_sl_pct)) AS mae_sl,
                             AVG(ABS(predicted_tp_pct - actual_tp_pct)) AS mae_tp
                         FROM ml_predictions
-                        WHERE DATE(created_at) = CURRENT_DATE
+                        WHERE created_at >= (NOW() AT TIME ZONE 'Asia/Jerusalem')::date
+                        AND created_at < ((NOW() AT TIME ZONE 'Asia/Jerusalem')::date + INTERVAL '1 day')
                     """)
                     r = cur.fetchone()
                     
@@ -984,14 +986,11 @@ class TelegramReporter:
     # ─────────────────────────────────────────────────────
     # Chart Generation
     # ─────────────────────────────────────────────────────
-    def generate_daily_equity_chart(
-        self,
-        filename: str = "/app/logs/daily_equity.png"
-    ) -> Optional[str]:
+    def generate_daily_equity_chart(self,filename: str = "/app/logs/daily_equity.png") -> Optional[str]:
         """Generate daily equity chart."""
         series = self.get_today_equity_series()
         if not series:
-            logger.warning("⚠️ No equity series for today – cannot build chart")
+            logger.warning("⚠️ No equity series for today - cannot build chart")
             return None
 
         try:
@@ -1001,10 +1000,14 @@ class TelegramReporter:
             
             for row in series:
                 ts = row["timestamp"]
+                # Convert to local timezone for display
                 if hasattr(ts, 'astimezone'):
                     times.append(ts.astimezone(LOCAL_TZ))
                 else:
-                    times.append(ts)
+                    # Fallback: assume UTC and convert
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    times.append(ts.astimezone(LOCAL_TZ))
                 balances.append(row["balance"])
                 equities.append(row["equity"])
 

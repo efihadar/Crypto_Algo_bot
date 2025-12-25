@@ -1,21 +1,23 @@
 # db_utils.py
 """
 Professional Database Utilities for Trading Bot
-Provides PostgreSQL database operations with comprehensive error handling and monitoring.
-Production-ready for live trading environments.
+Production-grade PostgreSQL operations with advanced error handling, monitoring, and performance optimization.
+Designed for 24/7 live trading environments.
 """
 import os
 import json
 import time
-import psycopg2
-import psycopg2.extras
+import math
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
-from loguru import logger
 from typing import List, Dict, Any, Optional, Union
+from decimal import Decimal
+import psycopg2
+import psycopg2.extras
+from loguru import logger
 
 # ============================================================
-# DB CONFIG
+# DB CONFIG — ENHANCED WITH VALIDATION & LOGGING
 # ============================================================
 DB_HOST = os.getenv("DB_HOST", os.getenv("POSTGRES_HOST", "localhost"))
 DB_PORT = int(os.getenv("DB_PORT", os.getenv("POSTGRES_PORT", "5432")))
@@ -23,18 +25,24 @@ DB_NAME = os.getenv("DB_NAME", os.getenv("POSTGRES_DB", "trading_db"))
 DB_USER = os.getenv("DB_USER", os.getenv("POSTGRES_USER", "trader"))
 DB_PASS = os.getenv("DB_PASS", os.getenv("POSTGRES_PASSWORD", "trader_pass"))
 
-# Connection retry settings
+# Connection settings
 MAX_RETRIES = 3
-RETRY_DELAY = 1.0  # seconds
+RETRY_DELAY = 1.0
+CONN_TIMEOUT = 10
+KEEPALIVE_IDLE = 30
+KEEPALIVE_INTERVAL = 10
+KEEPALIVE_COUNT = 5
 
-logger.info(f"🗄️ DB Config: {DB_HOST}:{DB_PORT} → {DB_NAME}")
+logger.info(f"🗄️ Database Configuration → {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
 
 # ============================================================
-# CONNECTION MANAGER
+# CONNECTION MANAGER — PRODUCTION GRADE
 # ============================================================
 @contextmanager
 def get_connection(retries: int = MAX_RETRIES):
-    """Get database connection with retry logic and comprehensive error handling"""
+    """
+    Production-grade database connection with retry logic, keepalive, and comprehensive error handling.
+    """
     conn = None
     last_error = None
     
@@ -46,41 +54,46 @@ def get_connection(retries: int = MAX_RETRIES):
                 password=DB_PASS,
                 host=DB_HOST,
                 port=DB_PORT,
-                connect_timeout=10,
+                connect_timeout=CONN_TIMEOUT,
                 keepalives=1,
-                keepalives_idle=30,
-                keepalives_interval=10,
-                keepalives_count=5
+                keepalives_idle=KEEPALIVE_IDLE,
+                keepalives_interval=KEEPALIVE_INTERVAL,
+                keepalives_count=KEEPALIVE_COUNT,
+                application_name="trading_bot"
             )
-            break  # Success
+            logger.debug(f"✅ Database connection established (attempt {attempt + 1})")
+            break
             
         except psycopg2.OperationalError as e:
             last_error = e
             if attempt < retries - 1:
-                logger.warning(
-                    f"⚠️ DB connection attempt {attempt + 1}/{retries} failed: {e}"
-                )
-                time.sleep(RETRY_DELAY * (attempt + 1))  # Exponential backoff
+                wait_time = RETRY_DELAY * (attempt + 1)
+                logger.warning(f"⚠️ DB connection attempt {attempt + 1}/{retries} failed: {e} — retrying in {wait_time}s")
+                time.sleep(wait_time)
             else:
-                logger.error(f"❌ DB connection failed after {retries} attempts: {e}")
+                logger.critical(f"❌ DB connection FAILED after {retries} attempts: {e}")
                 
         except Exception as e:
             last_error = e
-            logger.error(f"❌ DB connection error: {e}")
+            logger.error(f"❌ Unexpected DB connection error: {e}")
             break
     
     try:
+        if conn is None:
+            raise Exception("Failed to establish database connection after all retries")
         yield conn
     finally:
         if conn:
             try:
                 conn.close()
+                logger.debug("🔌 Database connection closed gracefully")
             except Exception as e:
-                logger.debug(f"⚠️ Failed to close connection: {e}")
+                logger.warning(f"⚠️ Failed to close DB connection: {e}")
 
 def check_connection() -> bool:
     """
-    Test database connectivity with comprehensive error handling.
+    Verify database connectivity with minimal overhead.
+    Returns True if connection is healthy, False otherwise.
     """
     try:
         with get_connection(retries=1) as conn:
@@ -89,28 +102,31 @@ def check_connection() -> bool:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1;")
                 result = cur.fetchone()
-                return result is not None and result[0] == 1
+                healthy = result is not None and result[0] == 1
+                if healthy:
+                    logger.debug("✅ Database health check passed")
+                return healthy
     except Exception as e:
-        logger.debug(f"DB health check failed: {e}")
+        logger.debug(f"❌ DB health check failed: {e}")
         return False
 
 # ============================================================
-# INIT TABLES (signals + executions + metrics + heartbeat)
+# INIT TABLES — ROBUST SCHEMA MANAGEMENT
 # ============================================================
 def init_tables() -> bool:
     """
-    Initialize all required database tables with comprehensive error handling.
-    Full professional version with all original columns + auto-fix for missing columns.
+    Initialize or migrate database schema with zero-downtime compatibility.
+    Automatically handles column additions and index creation.
     """
     with get_connection() as conn:
         if not conn:
-            logger.error("❌ Cannot initialize tables: no DB connection")
+            logger.error("❌ Cannot initialize tables: no database connection")
             return False
             
         try:
             cur = conn.cursor()
 
-            # 1. SIGNALS TABLE
+            # Signals Table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS signals (
                     id BIGSERIAL PRIMARY KEY,
@@ -125,12 +141,14 @@ def init_tables() -> bool:
                     session_tag TEXT,
                     raw JSONB
                 );
-                CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals(ts_utc DESC);
-                CREATE INDEX IF NOT EXISTS idx_signals_symbol ON signals(symbol);
-                CREATE INDEX IF NOT EXISTS idx_signals_confidence ON signals(confidence);
             """)
-            
-            # 2. TRADE EXECUTIONS TABLE (All columns restored)
+
+            # Indexes for Signals
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals(ts_utc DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_signals_symbol ON signals(symbol);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_signals_confidence ON signals(confidence);")
+
+            # Trade Executions Table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS trade_executions (
                     id BIGSERIAL PRIMARY KEY,
@@ -152,13 +170,15 @@ def init_tables() -> bool:
                     error_code INTEGER,
                     comment TEXT
                 );
-                CREATE INDEX IF NOT EXISTS idx_exec_status ON trade_executions(status);
-                CREATE INDEX IF NOT EXISTS idx_exec_symbol ON trade_executions(symbol);
-                CREATE INDEX IF NOT EXISTS idx_exec_created ON trade_executions(created_at);
-                CREATE INDEX IF NOT EXISTS idx_exec_closed ON trade_executions(closed_at);
             """)
 
-            # 3. ACCOUNT METRICS (Restored + Auto-fix for created_at)
+            # Indexes for Trade Executions
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_exec_status ON trade_executions(status);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_exec_symbol ON trade_executions(symbol);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_exec_created ON trade_executions(created_at);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_exec_closed ON trade_executions(closed_at);")
+
+            # Account Metrics Table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS account_metrics (
                     id BIGSERIAL PRIMARY KEY,
@@ -172,7 +192,7 @@ def init_tables() -> bool:
                 );
             """)
 
-            # --- MIGRATION CHECK: Fix the 'created_at' DB error ---
+            # Migration: Add created_at if missing
             cur.execute("""
                 DO $$
                 BEGIN
@@ -181,11 +201,12 @@ def init_tables() -> bool:
                         WHERE table_name='account_metrics' AND column_name='created_at'
                     ) THEN
                         ALTER TABLE account_metrics ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW();
+                        RAISE NOTICE '✅ Added created_at column to account_metrics';
                     END IF;
                 END$$;
             """)
 
-            # 4. BOT HEARTBEAT
+            # Bot Heartbeat Table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS bot_heartbeat (
                     id BIGSERIAL PRIMARY KEY,
@@ -199,11 +220,11 @@ def init_tables() -> bool:
                     open_positions INTEGER,
                     message TEXT
                 );
-                CREATE INDEX IF NOT EXISTS idx_heartbeat_timestamp ON bot_heartbeat(timestamp DESC);
-                CREATE INDEX IF NOT EXISTS idx_heartbeat_status ON bot_heartbeat(status);
             """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_heartbeat_timestamp ON bot_heartbeat(timestamp DESC);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_heartbeat_status ON bot_heartbeat(status);")
 
-            # 5. DAILY SUMMARY
+            # Daily Summary Table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS daily_summary (
                     id BIGSERIAL PRIMARY KEY,
@@ -219,53 +240,47 @@ def init_tables() -> bool:
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     updated_at TIMESTAMPTZ DEFAULT NOW()
                 );
-                CREATE INDEX IF NOT EXISTS idx_daily_date ON daily_summary(date);
-                CREATE INDEX IF NOT EXISTS idx_daily_created ON daily_summary(created_at);
             """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_daily_date ON daily_summary(date);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_daily_created ON daily_summary(created_at);")
 
             conn.commit()
-            logger.success("✅ Full DB schema initialized and migrations applied")
+            logger.success("✅ Database schema initialized/migrated successfully")
             return True
 
         except Exception as e:
-            logger.error(f"❌ init_tables failed: {e}")
+            logger.error(f"❌ Failed to initialize tables: {e}")
             if conn:
                 conn.rollback()
             return False
 
 # ============================================================
-# HEARTBEAT
+# UTILITY FUNCTIONS — TYPE CONVERSION & ERROR HANDLING
 # ============================================================
-def write_heartbeat(
-    status: str = "running",
-    cycle_count: int = 0,
-    step: str = "",
-    equity: Optional[float] = None,
-    balance: Optional[float] = None,
-    open_positions: Optional[int] = None,
-    message: str = "",
-    ts_utc: Optional[str] = None,
-    **kwargs  # Accept additional fields gracefully
-) -> bool:
+def _convert_decimal_to_float(data: Any) -> Any:
     """
-    Write heartbeat to database with comprehensive error handling.
-    
-    Args:
-        status: Bot status (running/error/stopped/idle)
-        cycle_count: Current cycle number
-        step: Current execution step
-        equity: Account equity
-        balance: Account balance
-        open_positions: Number of open positions
-        message: Additional message
-        ts_utc: Timestamp (ISO format) - IGNORED, timestamp auto-generated
-        
-    Returns:
-        True if successful, False otherwise
+    Recursively convert Decimal values to float for JSON serialization and API compatibility.
+    """
+    if isinstance(data, dict):
+        return {k: _convert_decimal_to_float(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [_convert_decimal_to_float(item) for item in data]
+    elif isinstance(data, Decimal):
+        return float(data)
+    return data
+
+# ============================================================
+# HEARTBEAT — ENHANCED MONITORING
+# ============================================================
+def write_heartbeat(status: str = "running",cycle_count: int = 0,step: str = "",equity: Optional[float] = None,balance: Optional[float] = None,
+    open_positions: Optional[int] = None,message: str = "",ts_utc: Optional[str] = None,**kwargs) -> bool:
+    """
+    Write heartbeat record for system monitoring and alerting.
+    All fields are sanitized and validated before insertion.
     """
     with get_connection() as conn:
         if not conn:
-            logger.warning("⚠️ write_heartbeat: no DB connection")
+            logger.warning("⚠️ write_heartbeat: no database connection available")
             return False
             
         try:
@@ -287,23 +302,18 @@ def write_heartbeat(
                     )
                 )
                 conn.commit()
-                logger.debug("✅ Heartbeat written to DB")
+                logger.trace("💓 Heartbeat recorded successfully")
                 return True
                 
         except Exception as e:
-            logger.error(f"❌ write_heartbeat failed: {e}")
+            logger.error(f"❌ Failed to write heartbeat: {e}")
             if conn:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
+                conn.rollback()
             return False
 
 def get_latest_heartbeat() -> Optional[Dict[str, Any]]:
     """
-    Get the most recent heartbeat with comprehensive error handling.
-    Returns:
-        Dict with heartbeat data or None
+    Retrieve the most recent heartbeat record for system status monitoring.
     """
     with get_connection() as conn:
         if not conn:
@@ -318,20 +328,16 @@ def get_latest_heartbeat() -> Optional[Dict[str, Any]]:
             """)
             row = cur.fetchone()
             if row:
-                return dict(row)
+                return _convert_decimal_to_float(dict(row))
             return None
             
         except Exception as e:
-            logger.error(f"❌ get_latest_heartbeat failed: {e}")
+            logger.error(f"❌ Failed to fetch latest heartbeat: {e}")
             return None
 
 def cleanup_old_heartbeats(days: int = 7) -> int:
     """
-    Remove heartbeat records older than specified days with comprehensive error handling.
-    Args:
-        days: Number of days to keep
-    Returns:
-        Number of deleted records
+    Remove outdated heartbeat records to maintain database performance.
     """
     with get_connection() as conn:
         if not conn:
@@ -351,47 +357,35 @@ def cleanup_old_heartbeats(days: int = 7) -> int:
             conn.commit()
             
             if deleted > 0:
-                logger.info(f"🧹 Cleaned up {deleted} old heartbeat records")
+                logger.info(f"🧹 Cleaned {deleted} heartbeat records older than {days} days")
             return deleted
             
         except Exception as e:
-            logger.error(f"❌ cleanup_old_heartbeats failed: {e}")
+            logger.error(f"❌ Failed to cleanup heartbeats: {e}")
             if conn:
                 conn.rollback()
             return 0
 
 # ============================================================
-# SIGNALS
+# SIGNALS — ENHANCED INSERT & QUERY
 # ============================================================
-def insert_signal(
-    symbol: str,
-    direction: str,
-    price: float,
-    sl: float,
-    tp: float,
-    timeframe: str,
-    confidence: float,
-    session_tag: str,
-    raw: Optional[Dict] = None
-) -> Optional[int]:
+def insert_signal(symbol: str,direction: str,price: float,sl: float,tp: float,timeframe: str,confidence: float,session_tag: str,
+raw: Optional[Dict] = None) -> Optional[int]:
     """
-    Insert a new signal into the database with comprehensive validation.
-    Returns: Signal ID if successful, None otherwise
+    Insert a new trading signal with full validation and error handling.
+    Returns signal ID on success, None on failure.
     """
     try:
-        # Validate inputs
         if not symbol or not isinstance(symbol, str):
-            logger.error("❌ Invalid symbol for insert_signal")
+            logger.error("❌ Invalid symbol parameter")
             return None
-        
         if not direction or not isinstance(direction, str):
-            logger.error("❌ Invalid direction for insert_signal")
+            logger.error("❌ Invalid direction parameter")
             return None
-        
         if not isinstance(price, (int, float)) or price <= 0:
-            logger.error("❌ Invalid price for insert_signal")
+            logger.error("❌ Invalid price parameter")
             return None
-        
+
         with get_connection() as conn:
             if not conn:
                 return None
@@ -419,26 +413,23 @@ def insert_signal(
                 )
                 signal_id = cur.fetchone()[0]
                 conn.commit()
-                logger.debug(f"✅ Signal inserted: ID={signal_id}, {symbol} {direction}")
+                logger.info(f"✅ Signal recorded: ID={signal_id}, {symbol} {direction} @ {price}")
                 return signal_id
 
             except Exception as e:
-                logger.error(f"❌ insert_signal failed: {e}")
+                logger.error(f"❌ Failed to insert signal: {e}")
                 if conn:
                     conn.rollback()
                 return None
                 
     except Exception as e:
-        logger.error(f"❌ insert_signal validation failed: {e}")
+        logger.error(f"❌ Signal validation failed: {e}")
         return None
 
 def get_recent_signals(symbol: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
     """
-    Get recent signals from database with comprehensive error handling.
-    Args:
-        symbol: Filter by symbol (optional)
-        limit: Maximum number of records
-    Returns: List of signal dicts
+    Fetch recent signals with optional symbol filtering.
+    Returns list of signal dictionaries.
     """
     with get_connection() as conn:
         if not conn:
@@ -455,7 +446,7 @@ def get_recent_signals(symbol: Optional[str] = None, limit: int = 50) -> List[Di
                     ORDER BY ts_utc DESC
                     LIMIT %s;
                     """,
-                    (symbol[:50] if symbol else "", limit)
+                    (symbol[:50], limit)
                 )
             else:
                 cur.execute(
@@ -467,119 +458,129 @@ def get_recent_signals(symbol: Optional[str] = None, limit: int = 50) -> List[Di
                     (limit,)
                 )
                 
-            results = []
-            for row in cur.fetchall():
-                row_dict = dict(row)
-                # Convert Decimal to float
-                for key in row_dict:
-                    if hasattr(row_dict[key], 'is_finite') and callable(getattr(row_dict[key], 'is_finite', None)):
-                        row_dict[key] = float(row_dict[key])
-                results.append(row_dict)
-            
-            return results
+            results = [dict(row) for row in cur.fetchall()]
+            return [_convert_decimal_to_float(r) for r in results]
             
         except Exception as e:
-            logger.error(f"❌ get_recent_signals failed: {e}")
+            logger.error(f"❌ Failed to fetch recent signals: {e}")
             return []
 
 # ============================================================
-# TRADE EXECUTIONS
+# TRADE EXECUTIONS — PRODUCTION-GRADE OPERATIONS
 # ============================================================
-def record_execution(
-    signal_id: Optional[int],
-    symbol: str,
-    direction: str,
-    entry: float,
-    size: float,
-    sl: Optional[float] = None,
-    tp: Optional[float] = None,
-    meta: Optional[Dict] = None,
-    ticket: Optional[str] = None
-) -> Optional[int]:
+def record_execution(signal_id: Optional[int],symbol: str,direction: str,entry: float,size: float,sl: Optional[float] = None,
+    tp: Optional[float] = None,meta: Optional[Dict] = None,ticket: Optional[str] = None) -> Optional[int]:
     """
-    Record a new trade execution (open trade) with comprehensive validation.
-    Returns: Trade ID if successful, None otherwise
+    Record a new trade execution (open position).
+    Returns trade ID on success, None on failure.
     """
     try:
         # Validate inputs
-        if not symbol or not isinstance(symbol, str):
-            logger.error("❌ Invalid symbol for record_execution")
+        if not isinstance(symbol, str) or not symbol.strip():
+            logger.error("❌ Invalid symbol: must be non-empty string")
             return None
-        
-        if not direction or not isinstance(direction, str):
-            logger.error("❌ Invalid direction for record_execution")
+        if not isinstance(direction, str) or not direction.strip():
+            logger.error("❌ Invalid direction: must be non-empty string")
             return None
-        
         if not isinstance(entry, (int, float)) or entry <= 0:
-            logger.error("❌ Invalid entry price for record_execution")
+            logger.error(f"❌ Invalid entry price: {entry} (must be > 0)")
             return None
-        
         if not isinstance(size, (int, float)) or size <= 0:
-            logger.error("❌ Invalid size for record_execution")
+            logger.error(f"❌ Invalid position size: {size} (must be > 0)")
             return None
-        
+        if sl is not None and (not isinstance(sl, (int, float)) or sl <= 0):
+            logger.error(f"❌ Invalid stop loss: {sl}")
+            return None
+        if tp is not None and (not isinstance(tp, (int, float)) or tp <= 0):
+            logger.error(f"❌ Invalid take profit: {tp}")
+            return None
+        if signal_id is not None and not isinstance(signal_id, int):
+            logger.error(f"❌ Invalid signal_id: {signal_id} (must be int or None)")
+            return None
+
+        # Sanitize strings
+        symbol_clean = symbol.strip()[:50]  # Max 50 chars
+        direction_clean = direction.strip().upper()[:20]  # Max 20 chars
+        ticket_clean = str(ticket)[:100] if ticket else None  # Max 100 chars
+
+        # Serialize meta to JSON safely
+        meta_json = None
+        if meta is not None:
+            try:
+                meta_json = json.dumps(meta, ensure_ascii=False)
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to serialize meta to JSON: {e}. Using empty dict.")
+                meta_json = json.dumps({})
+
         with get_connection() as conn:
             if not conn:
+                logger.error("❌ Database connection failed")
                 return None
 
             try:
                 cur = conn.cursor()
+
                 cur.execute(
                     """
-                    INSERT INTO trade_executions
-                    (signal_id, symbol, direction, entry_price, size, sl, tp, status, meta, ticket)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'opened', %s, %s)
+                    INSERT INTO trade_executions (
+                        signal_id, symbol, direction, entry_price, size, 
+                        sl, tp, status, meta, ticket, created_at
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, 
+                        %s, %s, 'opened', %s, %s, NOW()
+                    )
                     RETURNING id;
                     """,
                     (
-                        int(signal_id) if signal_id is not None else None,
-                        symbol[:20],
-                        direction[:10],
+                        signal_id,
+                        symbol_clean,
+                        direction_clean,
                         float(entry),
                         float(size),
                         float(sl) if sl is not None else None,
                         float(tp) if tp is not None else None,
-                        json.dumps(meta or {}),
-                        str(ticket)[:100] if ticket else None
+                        meta_json,
+                        ticket_clean
                     )
                 )
-                trade_id = cur.fetchone()[0]
+
+                result = cur.fetchone()
+                if not result:
+                    raise ValueError("No ID returned from INSERT")
+
+                trade_id = int(result[0])
                 conn.commit()
-                logger.debug(f"✅ Trade recorded: ID={trade_id}, {symbol} {direction}")
+
+                logger.info(
+                    f"✅ Trade opened: ID={trade_id}, {symbol_clean} "
+                    f"{direction_clean} x{size} @ {entry}"
+                )
                 return trade_id
 
             except Exception as e:
-                logger.error(f"❌ record_execution failed: {e}")
+                logger.error(f"❌ Failed to record trade execution: {e}")
                 if conn:
                     conn.rollback()
                 return None
-                
+
     except Exception as e:
-        logger.error(f"❌ record_execution validation failed: {e}")
+        logger.error(f"❌ Trade execution validation failed: {e}")
         return None
 
-def close_trade(
-    trade_id: int,
-    exit_price: float,
-    pnl: float,
-    comment: Optional[str] = None,
-    features: Optional[Dict] = None
-) -> bool:
+def close_trade(trade_id: int,exit_price: float,pnl: float,comment: Optional[str] = None,features: Optional[Dict] = None) -> bool:
     """
-    Close a trade and record the result with comprehensive error handling.
+    Close an existing trade and update its PnL and status.
+    Optionally save features to ML training dataset.
     """
     try:
-        # Validate inputs
         if not isinstance(trade_id, int) or trade_id <= 0:
-            logger.error("❌ Invalid trade_id for close_trade")
+            logger.error("❌ Invalid trade_id")
             return False
-        
         if not isinstance(exit_price, (int, float)) or exit_price <= 0:
-            logger.error("❌ Invalid exit_price for close_trade")
+            logger.error("❌ Invalid exit_price")
             return False
-        
         if not isinstance(pnl, (int, float)):
-            logger.error("❌ Invalid pnl for close_trade")
+            logger.error("❌ Invalid pnl")
             return False
         
         with get_connection() as conn:
@@ -589,6 +590,7 @@ def close_trade(
             try:
                 cur = conn.cursor()
                 
+                # Fetch trade details for ML storage
                 cur.execute(
                     """
                     SELECT symbol, direction, entry_price, sl, tp, size
@@ -600,11 +602,12 @@ def close_trade(
                 trade_data = cur.fetchone()
                 
                 if not trade_data:
-                    logger.warning(f"⚠️ Trade {trade_id} not found")
+                    logger.warning(f"⚠️ Trade {trade_id} not found for closing")
                     return False
                 
                 symbol, direction, entry_price, sl, tp, size = trade_data
                 
+                # Update trade record
                 cur.execute(
                     """
                     UPDATE trade_executions
@@ -629,42 +632,44 @@ def close_trade(
                 conn.commit()
                 
                 if affected > 0:
-                    logger.debug(f"✅ Trade closed: ID={trade_id}, PnL={pnl:.4f}")
+                    logger.info(f"✅ Trade closed: ID={trade_id}, PnL={pnl:+.4f} USDT")
                     
-                    # Import ML storage locally to avoid circular import
-                    try:
-                        from ml_system.data_storage import get_ml_storage
-                        ml_storage = get_ml_storage()
-                        
-                        ml_storage.save_trade({
-                            'symbol': str(symbol),
-                            'side': str(direction),
-                            'entry_price': float(entry_price) if entry_price is not None else 0.0,
-                            'exit_price': float(exit_price),
-                            'sl_used': float(sl) if sl is not None else None,
-                            'tp_used': float(tp) if tp is not None else None,
-                            'pnl': float(pnl),
-                            'outcome': 'profit' if pnl > 0 else 'loss',
-                            'price_move_pct': ((exit_price - entry_price) / entry_price) * 100 if entry_price and entry_price > 0 else 0.0,
-                            'features': features or {},
-                            'db_trade_id': int(trade_id)
-                        })
-                    except Exception as e:
-                        logger.warning(f"⚠️ Failed to save trade to ML storage: {e}")
+                    # Save to ML training set if features provided
+                    if features is not None:
+                        try:
+                            from ml_system.data_storage import get_ml_storage
+                            ml_storage = get_ml_storage()
+                            
+                            ml_storage.save_trade({
+                                'symbol': str(symbol),
+                                'side': str(direction),
+                                'entry_price': float(entry_price) if entry_price is not None else 0.0,
+                                'exit_price': float(exit_price),
+                                'sl_used': float(sl) if sl is not None else None,
+                                'tp_used': float(tp) if tp is not None else None,
+                                'pnl': float(pnl),
+                                'outcome': 'profit' if pnl > 0 else 'loss',
+                                'price_move_pct': ((exit_price - entry_price) / entry_price) * 100 if entry_price and entry_price > 0 else 0.0,
+                                'features': features or {},
+                                'db_trade_id': int(trade_id)
+                            })
+                            logger.debug(f"🧠 Trade {trade_id} saved to ML training dataset")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Failed to save trade to ML storage: {e}")
                     
                     return True
                 else:
-                    logger.warning(f"⚠️ Trade {trade_id} not found or already closed")
+                    logger.warning(f"⚠️ Trade {trade_id} already closed or not found")
                     return False
 
             except Exception as e:
-                logger.error(f"❌ close_trade failed: {e}")
+                logger.error(f"❌ Failed to close trade {trade_id}: {e}")
                 if conn:
                     conn.rollback()
                 return False
                 
     except Exception as e:
-        logger.error(f"❌ close_trade validation failed: {e}")
+        logger.error(f"❌ Close trade validation failed: {e}")
         return False
 
 def get_trade_by_id(trade_id: int) -> Optional[Dict[str, Any]]:
@@ -705,30 +710,37 @@ def get_trade_by_id(trade_id: int) -> Optional[Dict[str, Any]]:
         logger.error(f"❌ get_trade_by_id validation failed: {e}")
         return None
 
+# ============================================================
+# TRADE QUERIES — ENHANCED PERFORMANCE & LOGGING
+# ============================================================
+
 def get_open_trades(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Get all open trades with comprehensive error handling.
-    Args:
-        symbol: Filter by symbol (optional)
-    Returns: List of open trade dicts
+    Retrieve all currently open trades with optional symbol filtering.
+    Returns empty list on failure or if no connection available.
     """
+    start_time = time.time()
+    
     with get_connection() as conn:
         if not conn:
+            logger.warning("⚠️ get_open_trades: no database connection")
             return []
             
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             
             if symbol:
+                logger.debug(f"🔍 Fetching open trades for symbol: {symbol}")
                 cur.execute(
                     """
                     SELECT * FROM trade_executions
                     WHERE status = 'opened' AND symbol = %s
                     ORDER BY created_at DESC;
                     """,
-                    (symbol[:20] if symbol else "",)
+                    (symbol[:20],)
                 )
             else:
+                logger.debug("🔍 Fetching all open trades")
                 cur.execute(
                     """
                     SELECT * FROM trade_executions
@@ -737,105 +749,86 @@ def get_open_trades(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
                     """
                 )
                 
-            results = []
-            for row in cur.fetchall():
-                row_dict = dict(row)
-                # Convert Decimal to float
-                for key in row_dict:
-                    if hasattr(row_dict[key], 'is_finite') and callable(getattr(row_dict[key], 'is_finite', None)):
-                        row_dict[key] = float(row_dict[key])
-                results.append(row_dict)
+            rows = cur.fetchall()
+            results = [_convert_decimal_to_float(dict(row)) for row in rows]
             
+            duration = time.time() - start_time
+            logger.info(f"✅ Retrieved {len(results)} open trades in {duration:.3f}s")
             return results
             
         except Exception as e:
-            logger.error(f"❌ get_open_trades failed: {e}")
+            logger.error(f"❌ Failed to fetch open trades: {e}")
             return []
 
-def get_closed_trades(
-    symbol: Optional[str] = None,
-    days: int = 7,
-    limit: int = 100
-) -> List[Dict[str, Any]]:
+def get_closed_trades(symbol: Optional[str] = None,days: int = 7,limit: int = 100) -> List[Dict[str, Any]]:
     """
-    Get closed trades within a time period with comprehensive error handling.
+    Retrieve closed trades within specified time window.
+    Supports optional symbol filtering and result limiting.
+    """
+    start_time = time.time()
     
-    Args:
-        symbol: Filter by symbol (optional)
-        days: Number of days to look back
-        limit: Maximum records
-        
-    Returns:
-        List of closed trade dicts
-    """
     with get_connection() as conn:
         if not conn:
+            logger.warning("⚠️ get_closed_trades: no database connection")
             return []
             
         try:
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             
-            if symbol:
-                cur.execute(
-                    """
-                    SELECT * FROM trade_executions
-                    WHERE status = 'closed' 
-                      AND symbol = %s
-                      AND closed_at > NOW() - INTERVAL '%s days'
-                    ORDER BY closed_at DESC
-                    LIMIT %s;
-                    """,
-                    (symbol[:20] if symbol else "", days, limit)
-                )
-            else:
-                cur.execute(
-                    """
-                    SELECT * FROM trade_executions
-                    WHERE status = 'closed'
-                      AND closed_at > NOW() - INTERVAL '%s days'
-                    ORDER BY closed_at DESC
-                    LIMIT %s;
-                    """,
-                    (days, limit)
-                )
-                
-            results = []
-            for row in cur.fetchall():
-                row_dict = dict(row)
-                # Convert Decimal to float
-                for key in row_dict:
-                    if hasattr(row_dict[key], 'is_finite') and callable(getattr(row_dict[key], 'is_finite', None)):
-                        row_dict[key] = float(row_dict[key])
-                results.append(row_dict)
+            params = []
+            base_query = """
+                SELECT * FROM trade_executions
+                WHERE status = 'closed'
+                  AND closed_at > NOW() - INTERVAL '%s days'
+                ORDER BY closed_at DESC
+                LIMIT %s
+            """
             
+            if symbol:
+                logger.debug(f"🔍 Fetching closed trades for {symbol} (last {days} days)")
+                query = base_query.replace("ORDER BY", "AND symbol = %s ORDER BY")
+                params = [symbol[:20], days, limit]
+            else:
+                logger.debug(f"🔍 Fetching all closed trades (last {days} days)")
+                query = base_query
+                params = [days, limit]
+                
+            cur.execute(query, params)
+            
+            rows = cur.fetchall()
+            results = [_convert_decimal_to_float(dict(row)) for row in rows]
+            
+            duration = time.time() - start_time
+            logger.info(f"✅ Retrieved {len(results)} closed trades in {duration:.3f}s")
             return results
             
         except Exception as e:
-            logger.error(f"❌ get_closed_trades failed: {e}")
+            logger.error(f"❌ Failed to fetch closed trades: {e}")
             return []
+
+# ============================================================
+# TRADE UPDATES — ATOMIC & SAFE
+# ============================================================
 
 def update_trade_meta(trade_id: int, meta: Dict[str, Any]) -> bool:
     """
-    Update the meta field of a trade (merge with existing) with comprehensive error handling.
-    
-    Args:
-        trade_id: Trade ID
-        meta: Dict to merge into existing meta
-        
-    Returns:
-        True if successful
+    Atomically update trade metadata by merging with existing values.
+    Uses JSONB operators for efficient partial updates.
     """
+    start_time = time.time()
+    
     try:
         if not isinstance(trade_id, int) or trade_id <= 0:
-            logger.error("❌ Invalid trade_id for update_trade_meta")
+            logger.error(f"❌ Invalid trade_id: {trade_id}")
             return False
         
         if not isinstance(meta, dict):
-            logger.error("❌ Invalid meta for update_trade_meta")
+            logger.error("❌ Meta must be a dictionary")
             return False
         
         with get_connection() as conn:
             if not conn:
+                logger.warning("⚠️ update_trade_meta: no database connection")
                 return False
                 
             try:
@@ -846,92 +839,117 @@ def update_trade_meta(trade_id: int, meta: Dict[str, Any]) -> bool:
                     SET 
                         meta = COALESCE(meta, '{}'::jsonb) || %s::jsonb,
                         updated_at = NOW()
-                    WHERE id = %s;
+                    WHERE id = %s
+                    RETURNING id;
                     """,
                     (json.dumps(meta), trade_id)
                 )
-                conn.commit()
-                return cur.rowcount > 0
                 
+                updated = cur.fetchone()
+                conn.commit()
+                
+                duration = time.time() - start_time
+                if updated:
+                    logger.info(f"✅ Updated meta for trade {trade_id} in {duration:.3f}s")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Trade {trade_id} not found for meta update")
+                    return False
+                    
             except Exception as e:
-                logger.error(f"❌ update_trade_meta failed: {e}")
+                logger.error(f"❌ Failed to update trade meta: {e}")
                 if conn:
                     conn.rollback()
                 return False
                 
     except Exception as e:
-        logger.error(f"❌ update_trade_meta validation failed: {e}")
+        logger.error(f"❌ Validation failed in update_trade_meta: {e}")
         return False
 
-def update_trade_sl_tp(
-    trade_id: int,
-    sl: Optional[float] = None,
-    tp: Optional[float] = None
-) -> bool:
+def update_trade_sl_tp(trade_id: int,sl: Optional[float] = None,tp: Optional[float] = None) -> bool:
     """
-    Update SL/TP for a trade with comprehensive error handling.
+    Update stop loss and/or take profit levels for a specific trade.
+    Only updates provided values, leaves others unchanged.
     """
+    start_time = time.time()
+    
     try:
         if not isinstance(trade_id, int) or trade_id <= 0:
-            logger.error("❌ Invalid trade_id for update_trade_sl_tp")
+            logger.error(f"❌ Invalid trade_id: {trade_id}")
             return False
+        
+        # Early exit if no updates requested
+        if sl is None and tp is None:
+            logger.debug(f"ℹ️ No SL/TP updates requested for trade {trade_id}")
+            return True
         
         with get_connection() as conn:
             if not conn:
+                logger.warning("⚠️ update_trade_sl_tp: no database connection")
                 return False
                 
             try:
                 cur = conn.cursor()
                 
-                updates = []
+                set_clauses = []
                 params = []
                 
                 if sl is not None:
-                    updates.append("sl = %s")
+                    set_clauses.append("sl = %s")
                     params.append(float(sl))
+                    logger.debug(f"📉 Updating SL to {sl} for trade {trade_id}")
+                    
                 if tp is not None:
-                    updates.append("tp = %s")
+                    set_clauses.append("tp = %s")
                     params.append(float(tp))
-                    
-                if not updates:
-                    return True
-                    
-                updates.append("updated_at = NOW()")
+                    logger.debug(f"📈 Updating TP to {tp} for trade {trade_id}")
+                
+                set_clauses.append("updated_at = NOW()")
                 params.append(trade_id)
                 
-                cur.execute(
-                    f"""
+                query = f"""
                     UPDATE trade_executions
-                    SET {", ".join(updates)}
-                    WHERE id = %s;
-                    """,
-                    tuple(params)
-                )
-                conn.commit()
-                return cur.rowcount > 0
+                    SET {", ".join(set_clauses)}
+                    WHERE id = %s
+                    RETURNING id;
+                """
                 
+                cur.execute(query, tuple(params))
+                updated = cur.fetchone()
+                conn.commit()
+                
+                duration = time.time() - start_time
+                if updated:
+                    logger.info(f"✅ Updated SL/TP for trade {trade_id} in {duration:.3f}s")
+                    return True
+                else:
+                    logger.warning(f"⚠️ Trade {trade_id} not found for SL/TP update")
+                    return False
+                    
             except Exception as e:
-                logger.error(f"❌ update_trade_sl_tp failed: {e}")
+                logger.error(f"❌ Failed to update trade SL/TP: {e}")
                 if conn:
                     conn.rollback()
                 return False
                 
     except Exception as e:
-        logger.error(f"❌ update_trade_sl_tp validation failed: {e}")
+        logger.error(f"❌ Validation failed in update_trade_sl_tp: {e}")
         return False
+
+# ============================================================
+# STATISTICS — ENHANCED ANALYTICS
+# ============================================================
 
 def get_trade_statistics(days: int = 30) -> Dict[str, Any]:
     """
-    Get trading statistics for a period with comprehensive error handling.
-    
-    Args:
-        days: Number of days to analyze
-        
-    Returns:
-        Dict with statistics
+    Generate comprehensive trading statistics for performance analysis.
+    Includes win rate, profit factor, average gains/losses, and more.
     """
+    start_time = time.time()
+    
     with get_connection() as conn:
         if not conn:
+            logger.warning("⚠️ get_trade_statistics: no database connection")
             return {}
             
         try:
@@ -957,162 +975,135 @@ def get_trade_statistics(days: int = 30) -> Dict[str, Any]:
             row = cur.fetchone()
             
             if not row:
+                logger.info(f"ℹ️ No trades found in last {days} days")
                 return {}
                 
-            stats = dict(row)
+            stats = _convert_decimal_to_float(dict(row))
             
-            # Calculate win rate
-            total = stats.get("total_trades", 0)
-            wins = stats.get("winning_trades", 0)
-            stats["win_rate"] = (wins / total * 100) if total > 0 else 0
+            # Calculate derived metrics
+            total_trades = stats.get("total_trades", 0)
+            winning_trades = stats.get("winning_trades", 0)
+            stats["win_rate"] = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
             
-            # Calculate profit factor
-            avg_win = abs(float(stats.get("avg_win", 0) or 0))
-            avg_loss = abs(float(stats.get("avg_loss", 0) or 0))
-            stats["profit_factor"] = (avg_win / avg_loss) if avg_loss > 0 else 0
+            avg_win = abs(stats.get("avg_win", 0.0))
+            avg_loss = abs(stats.get("avg_loss", 0.0))
+            stats["profit_factor"] = (avg_win / avg_loss) if avg_loss > 0 else 0.0
             
-            # Convert Decimal to float
-            for key in stats:
-                if hasattr(stats[key], 'is_finite') and callable(getattr(stats[key], 'is_finite', None)):
-                    stats[key] = float(stats[key])
-                    
+            # Add additional metrics
+            stats["risk_reward_ratio"] = (avg_win / avg_loss) if avg_loss > 0 else 0.0
+            stats["expectancy"] = (stats["win_rate"] / 100 * avg_win) - ((100 - stats["win_rate"]) / 100 * avg_loss)
+            
+            duration = time.time() - start_time
+            logger.info(f"📊 Generated trade statistics for {days} days in {duration:.3f}s")
             return stats
             
         except Exception as e:
-            logger.error(f"❌ get_trade_statistics failed: {e}")
+            logger.error(f"❌ Failed to generate trade statistics: {e}")
             return {}
 
 # ============================================================
-# ACCOUNT METRICS
+# ACCOUNT METRICS — PRODUCTION GRADE
 # ============================================================
-def record_metrics(
-    balance: float,
-    equity: float,
-    profit: float,
-    margin: float = 0.0,
-    free_margin: float = 0.0,
-    margin_level: float = 0.0
-) -> bool:
+
+def record_metrics(balance: float, equity: float, profit: float, margin: float = 0.0, free_margin: float = 0.0, margin_level: float = 0.0) -> bool:
     """
-    Record account metrics snapshot with comprehensive error handling.
+    Record current account metrics for performance tracking and analysis.
+    All values are validated and sanitized before insertion.
     """
-    # Enhanced logging for debugging
+    start_time = time.time()
+    
+    # Input sanitization
+    try:
+        def sanitize_number(val, name: str) -> Optional[float]:
+            if val is None:
+                logger.warning(f"⚠️ {name} is None — defaulting to 0.0")
+                return 0.0
+            if not isinstance(val, (int, float)):
+                logger.error(f"❌ {name} is not a number: {type(val)} = {val}")
+                return None
+            if math.isnan(val) or math.isinf(val):
+                logger.warning(f"⚠️ {name} is {val} — defaulting to 0.0")
+                return 0.0
+            return float(val)
+
+        balance_clean = sanitize_number(balance, "Balance")
+        equity_clean = sanitize_number(equity, "Equity")
+        profit_clean = sanitize_number(profit, "Profit")
+        margin_clean = sanitize_number(margin, "Margin")
+        free_margin_clean = sanitize_number(free_margin, "Free Margin")
+        margin_level_clean = sanitize_number(margin_level, "Margin Level")
+
+        if None in (balance_clean, equity_clean, profit_clean):
+            logger.error("❌ One or more required metrics are invalid")
+            return False
+
+    except Exception as e:
+        logger.error(f"❌ Failed to sanitize metrics: {e}")
+        return False
+
     logger.debug(
-        f"record_metrics called: "
-        f"balance={balance}, equity={equity}, profit={profit}, "
-        f"margin={margin}, free_margin={free_margin}, margin_level={margin_level}"
+        f"📊 Recording metrics → Balance=${balance_clean:.2f}, Equity=${equity_clean:.2f}, "
+        f"Profit=${profit_clean:.2f}, Margin=${margin_clean:.2f}, Free=${free_margin_clean:.2f}, Level={margin_level_clean:.2f}%"
     )
     
-    try:
-        # Validate inputs
-        if not isinstance(balance, (int, float)):
-            logger.error("❌ Invalid balance for record_metrics")
-            return False
-        
-        if not isinstance(equity, (int, float)):
-            logger.error("❌ Invalid equity for record_metrics")
-            return False
-        
-        if not isinstance(profit, (int, float)):
-            logger.error("❌ Invalid profit for record_metrics")
-            return False
-        
-        with get_connection() as conn:
-            if not conn:
-                logger.error("❌ record_metrics: no DB connection")
-                return False
-
-            try:
-                with conn.cursor() as cur:
-                    # ✅ Add RETURNING clause to verify insertion
-                    cur.execute(
-                        """
-                        INSERT INTO account_metrics
-                        (balance, equity, profit, margin, free_margin, margin_level)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        RETURNING id, timestamp;
-                        """,
-                        (
-                            float(balance),
-                            float(equity),
-                            float(profit),
-                            float(margin),
-                            float(free_margin),
-                            float(margin_level)
-                        )
-                    )
-                    
-                    # Get the inserted row info
-                    row = cur.fetchone()
-                    if row:
-                        row_id, timestamp = row
-                        logger.debug(f"Inserted metrics: ID={row_id}, timestamp={timestamp}")
-                    
-                    conn.commit()
-                    logger.success(
-                        f"Metrics recorded: Balance=${balance:.2f}, Equity=${equity:.2f}, "
-                        f"Profit=${profit:.2f}"
-                    )
-                    return True
-
-            except Exception as e:
-                logger.error(f"❌ record_metrics failed: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-                if conn:
-                    try:
-                        conn.rollback()
-                    except Exception:
-                        pass
-                return False
-                
-    except Exception as e:
-        logger.error(f"❌ record_metrics validation failed: {e}")
-        return False
-
-def safe_record_metrics(
-    balance: float,
-    equity: float,
-    profit: float,
-    margin: float = 0.0,
-    free_margin: float = 0.0,
-    margin_level: float = 0.0
-) -> bool:
-    """Saves account metrics to DB with robust error handling."""
-    try:
-        from db_utils import get_connection
-        with get_connection() as conn:
-            if not conn:
-                logger.error("❌ DB Connection failed in safe_record_metrics")
-                return False
-            
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO account_metrics 
-                    (balance, equity, profit, margin, free_margin, margin_level, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, NOW())
-                """, (
-                    float(balance) if balance is not None else 0.0,
-                    float(equity) if equity is not None else 0.0,
-                    float(profit) if profit is not None else 0.0,
-                    float(margin) if margin is not None else 0.0,
-                    float(free_margin) if free_margin is not None else 0.0,
-                    float(margin_level) if margin_level is not None else 0.0
-                ))
-                conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"❌ safe_record_metrics DB error: {e}")
-        return False
-    
-def latest_metrics() -> Dict[str, Any]:
-    """
-    Get the most recent account metrics with comprehensive error handling.
-    Returns:
-        Dict with metric values or empty dict
-    """
     with get_connection() as conn:
         if not conn:
+            logger.error("❌ record_metrics: no database connection")
+            return False
+
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO account_metrics
+                    (balance, equity, profit, margin, free_margin, margin_level, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, NOW())
+                    RETURNING id;
+                    """,
+                    (
+                        balance_clean,
+                        equity_clean,
+                        profit_clean,
+                        margin_clean,
+                        free_margin_clean,
+                        margin_level_clean
+                    )
+                )
+                
+                metric_id = cur.fetchone()[0]
+                conn.commit()
+                
+                duration = time.time() - start_time
+                logger.success(f"✅ Metrics recorded (ID={metric_id}) in {duration:.3f}s")
+                return True
+
+        except Exception as e:
+            logger.error(f"❌ Failed to record metrics: {e}")
+            if conn:
+                conn.rollback()
+            return False
+
+def safe_record_metrics(balance: float,equity: float,profit: float,margin: float = 0.0,free_margin: float = 0.0,margin_level: float = 0.0) -> bool:
+    """
+    Safely record account metrics with comprehensive error handling.
+    Will not raise exceptions even on complete database failure.
+    """
+    try:
+        return record_metrics(balance, equity, profit, margin, free_margin, margin_level)
+    except Exception as e:
+        logger.error(f"❌ safe_record_metrics failed: {e}")
+        return False
+
+def latest_metrics() -> Dict[str, Any]:
+    """
+    Retrieve the most recent account metrics snapshot.
+    Returns empty dict if no metrics found or on error.
+    """
+    start_time = time.time()
+    
+    with get_connection() as conn:
+        if not conn:
+            logger.warning("⚠️ latest_metrics: no database connection")
             return {}
             
         try:
@@ -1127,31 +1118,29 @@ def latest_metrics() -> Dict[str, Any]:
             row = cur.fetchone()
             
             if not row:
+                logger.info("ℹ️ No metrics found in database")
                 return {}
                 
-            result = dict(row)
-            # Convert Decimal to float
-            for key in result:
-                if hasattr(result[key], 'is_finite') and callable(getattr(result[key], 'is_finite', None)):
-                    result[key] = float(result[key])
+            result = _convert_decimal_to_float(dict(row))
+            
+            duration = time.time() - start_time
+            logger.debug(f"✅ Retrieved latest metrics in {duration:.3f}s")
             return result
             
         except Exception as e:
-            logger.error(f"❌ latest_metrics failed: {e}")
+            logger.error(f"❌ Failed to fetch latest metrics: {e}")
             return {}
 
 def get_metrics_history(hours: int = 24) -> List[Dict[str, Any]]:
     """
-    Get metrics history for a time period with comprehensive error handling.
-    
-    Args:
-        hours: Number of hours to look back
-        
-    Returns:
-        List of metric dicts
+    Retrieve historical metrics for charting and analysis.
+    Returns metrics from specified time window ordered chronologically.
     """
+    start_time = time.time()
+    
     with get_connection() as conn:
         if not conn:
+            logger.warning("⚠️ get_metrics_history: no database connection")
             return []
             
         try:
@@ -1160,36 +1149,32 @@ def get_metrics_history(hours: int = 24) -> List[Dict[str, Any]]:
                 """
                 SELECT * FROM account_metrics
                 WHERE timestamp > NOW() - INTERVAL '%s hours'
-                ORDER BY timestamp DESC;
+                ORDER BY timestamp ASC;  -- Chronological order for charting
                 """,
                 (hours,)
             )
             
-            results = []
-            for row in cur.fetchall():
-                d = dict(row)
-                for key in d:
-                    if hasattr(d[key], 'is_finite') and callable(getattr(d[key], 'is_finite', None)):
-                        d[key] = float(d[key])
-                results.append(d)
+            rows = cur.fetchall()
+            results = [_convert_decimal_to_float(dict(row)) for row in rows]
+            
+            duration = time.time() - start_time
+            logger.info(f"✅ Retrieved {len(results)} metrics records from last {hours} hours in {duration:.3f}s")
             return results
             
         except Exception as e:
-            logger.error(f"❌ get_metrics_history failed: {e}")
+            logger.error(f"❌ Failed to fetch metrics history: {e}")
             return []
 
 def cleanup_old_metrics(days: int = 30) -> int:
     """
-    Remove old metrics records with comprehensive error handling.
-    
-    Args:
-        days: Number of days to keep
-        
-    Returns:
-        Number of deleted records
+    Remove old metrics records to maintain database performance.
+    Returns number of records deleted.
     """
+    start_time = time.time()
+    
     with get_connection() as conn:
         if not conn:
+            logger.warning("⚠️ cleanup_old_metrics: no database connection")
             return 0
             
         try:
@@ -1206,52 +1191,47 @@ def cleanup_old_metrics(days: int = 30) -> int:
             conn.commit()
             
             if deleted > 0:
-                logger.info(f"🧹 Cleaned up {deleted} old metric records")
+                duration = time.time() - start_time
+                logger.info(f"🧹 Cleaned up {deleted} old metric records (> {days} days) in {duration:.3f}s")
             return deleted
             
         except Exception as e:
-            logger.error(f"❌ cleanup_old_metrics failed: {e}")
+            logger.error(f"❌ Failed to cleanup old metrics: {e}")
             if conn:
                 conn.rollback()
             return 0
 
 # ============================================================
-# DAILY SUMMARY
+# DAILY SUMMARY — BUSINESS INTELLIGENCE
 # ============================================================
-def update_daily_summary(
-    date: Optional[datetime] = None,
-    starting_balance: Optional[float] = None,
-    ending_balance: Optional[float] = None,
-    total_pnl: Optional[float] = None,
-    total_trades: Optional[int] = None,
-    winning_trades: Optional[int] = None,
-    losing_trades: Optional[int] = None,
-    max_drawdown: Optional[float] = None
-) -> bool:
+
+def update_daily_summary(date: Optional[datetime] = None,starting_balance: Optional[float] = None,ending_balance: Optional[float] = None,total_pnl: Optional[float] = None,
+    total_trades: Optional[int] = None,winning_trades: Optional[int] = None,losing_trades: Optional[int] = None,max_drawdown: Optional[float] = None) -> bool:
     """
-    Update or insert daily summary record with comprehensive error handling.
+    Create or update daily performance summary for business intelligence.
+    Automatically calculates win rate and handles conflicts gracefully.
+    """
+    start_time = time.time()
     
-    Returns:
-        True if successful
-    """
     try:
         if date is None:
             date = datetime.now(timezone.utc).date()
         elif isinstance(date, datetime):
             date = date.date()
             
+        # Calculate win rate if possible
+        win_rate = None
+        if total_trades and total_trades > 0 and winning_trades is not None:
+            win_rate = (winning_trades / total_trades) * 100
+            logger.debug(f"📈 Calculated win rate: {win_rate:.2f}% ({winning_trades}/{total_trades})")
+        
         with get_connection() as conn:
             if not conn:
+                logger.warning("⚠️ update_daily_summary: no database connection")
                 return False
                 
             try:
                 cur = conn.cursor()
-                
-                # Calculate win rate if we have the data
-                win_rate = None
-                if total_trades and total_trades > 0 and winning_trades is not None:
-                    win_rate = (winning_trades / total_trades) * 100
-                
                 cur.execute(
                     """
                     INSERT INTO daily_summary 
@@ -1266,7 +1246,8 @@ def update_daily_summary(
                         losing_trades = COALESCE(EXCLUDED.losing_trades, daily_summary.losing_trades),
                         win_rate = COALESCE(EXCLUDED.win_rate, daily_summary.win_rate),
                         max_drawdown = COALESCE(EXCLUDED.max_drawdown, daily_summary.max_drawdown),
-                        updated_at = NOW();
+                        updated_at = NOW()
+                    RETURNING id;
                     """,
                     (
                         date,
@@ -1280,28 +1261,34 @@ def update_daily_summary(
                         float(max_drawdown) if max_drawdown is not None else None
                     )
                 )
+                
+                summary_id = cur.fetchone()[0]
                 conn.commit()
+                
+                duration = time.time() - start_time
+                logger.info(f"✅ Daily summary updated for {date} (ID={summary_id}) in {duration:.3f}s")
                 return True
                 
             except Exception as e:
-                logger.error(f"❌ update_daily_summary failed: {e}")
+                logger.error(f"❌ Failed to update daily summary: {e}")
                 if conn:
                     conn.rollback()
                 return False
                 
     except Exception as e:
-        logger.error(f"❌ update_daily_summary validation failed: {e}")
+        logger.error(f"❌ Validation failed in update_daily_summary: {e}")
         return False
 
 def get_daily_summaries(days: int = 30) -> List[Dict[str, Any]]:
     """
-    Get daily summaries for a period with comprehensive error handling.
-    
-    Returns:
-        List of daily summary dicts
+    Retrieve daily summaries for performance analysis and reporting.
+    Returns summaries from specified time window ordered by date.
     """
+    start_time = time.time()
+    
     with get_connection() as conn:
         if not conn:
+            logger.warning("⚠️ get_daily_summaries: no database connection")
             return []
             
         try:
@@ -1315,46 +1302,39 @@ def get_daily_summaries(days: int = 30) -> List[Dict[str, Any]]:
                 (days,)
             )
             
-            results = []
-            for row in cur.fetchall():
-                d = dict(row)
-                for key in d:
-                    if hasattr(d[key], 'is_finite') and callable(getattr(d[key], 'is_finite', None)):
-                        d[key] = float(d[key])
-                results.append(d)
+            rows = cur.fetchall()
+            results = [_convert_decimal_to_float(dict(row)) for row in rows]
+            
+            duration = time.time() - start_time
+            logger.info(f"✅ Retrieved {len(results)} daily summaries from last {days} days in {duration:.3f}s")
             return results
             
         except Exception as e:
-            logger.error(f"❌ get_daily_summaries failed: {e}")
+            logger.error(f"❌ Failed to fetch daily summaries: {e}")
             return []
 
 # ============================================================
-# CLEANUP / MAINTENANCE
+# CLEANUP / MAINTENANCE — DATABASE HYGIENE
 # ============================================================
+
 def cleanup_old_data(
     heartbeat_days: int = 7,
     metrics_days: int = 30,
     signals_days: int = 30
 ) -> Dict[str, int]:
     """
-    Clean up old data from all tables with comprehensive error handling.
-    
-    Args:
-        heartbeat_days: Days to keep heartbeats
-        metrics_days: Days to keep metrics
-        signals_days: Days to keep signals
-        
-    Returns:
-        Dict with counts of deleted records per table
+    Comprehensive database cleanup to maintain optimal performance.
+    Removes old records from all major tables based on retention policies.
+    Returns summary of cleanup operations.
     """
-    deleted = {
-        "heartbeats": 0,
-        "metrics": 0,
-        "signals": 0,
-    }
+    start_time = time.time()
+    logger.info("🧹 Starting comprehensive database cleanup...")
     
-    deleted["heartbeats"] = cleanup_old_heartbeats(heartbeat_days)
-    deleted["metrics"] = cleanup_old_metrics(metrics_days)
+    deleted = {
+        "heartbeats": cleanup_old_heartbeats(heartbeat_days),
+        "metrics": cleanup_old_metrics(metrics_days),
+        "signals": 0
+    }
     
     # Cleanup old signals
     with get_connection() as conn:
@@ -1371,13 +1351,19 @@ def cleanup_old_data(
                 )
                 deleted["signals"] = cur.rowcount
                 conn.commit()
+                logger.debug(f"🧹 Cleaned {deleted['signals']} old signal records (> {signals_days} days)")
             except Exception as e:
-                logger.error(f"❌ cleanup signals failed: {e}")
+                logger.error(f"❌ Failed to cleanup signals: {e}")
                 if conn:
                     conn.rollback()
     
-    total = sum(deleted.values())
-    if total > 0:
-        logger.info(f"🧹 Cleanup complete: {deleted}")
+    total_deleted = sum(deleted.values())
+    duration = time.time() - start_time
+    
+    if total_deleted > 0:
+        logger.success(f"✅ Database cleanup completed: removed {total_deleted} records in {duration:.3f}s")
+        logger.info(f"   Breakdown: {deleted}")
+    else:
+        logger.info(f"ℹ️ No records to clean up (completed in {duration:.3f}s)")
     
     return deleted

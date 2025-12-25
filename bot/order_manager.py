@@ -352,13 +352,7 @@ class OrderManager:
             return fallback_price, side
 
     @staticmethod
-    def _normalize_stops_for_side(
-        side: str,
-        ref_price: float,
-        sl: Optional[float],
-        tp: Optional[float],
-        tick_size: float,
-    ) -> Tuple[Optional[float], Optional[float]]:
+    def _normalize_stops_for_side(side: str,ref_price: float,sl: Optional[float],tp: Optional[float],tick_size: float,) -> Tuple[Optional[float], Optional[float]]:
         """Normalize stops for side with comprehensive error handling."""
         try:
             if tick_size <= 0:
@@ -559,15 +553,8 @@ class OrderManager:
             logger.error(f"❌ _should_exit_momentum_position failed for {symbol}: {e}")
             return False, ""
 
-    def _set_position_stops(self,
-        symbol: str,
-        stop_loss: Optional[float],
-        take_profit: Optional[float],
-        side: Optional[str] = None,
-        entry_price: Optional[float] = None,
-        base_price: Optional[float] = None,
-        max_retries: int = 3,
-    ) -> bool:
+    def _set_position_stops(self,symbol: str,stop_loss: Optional[float],take_profit: Optional[float],side: Optional[str] = None,
+        entry_price: Optional[float] = None,base_price: Optional[float] = None,max_retries: int = 3,) -> bool:
         """Set position stop loss and take profit on exchange with comprehensive error handling."""
         try:
             if stop_loss is None and take_profit is None:
@@ -752,7 +739,6 @@ class OrderManager:
                 deviation = abs(current_market_price - entry_price) / entry_price
                 
                 try:
-
                     if hasattr(self, 'risk') and hasattr(self.risk, 'config'):
                         max_dev_pct = float(self.risk.config.get('trading', 'MAX_PRICE_DEVIATION_PCT', 2.5))
                     else:
@@ -842,7 +828,6 @@ class OrderManager:
                                     
                 except Exception as e:
                     logger.debug(f"⚠️ ML prediction/filtering failed for {symbol}: {e}")
-                    # Optional: Return None here if you want to block trades when ML is down
 
             # ═══════════════════════════════════════════════════════════
             # Handle momentum trades
@@ -1028,11 +1013,6 @@ class OrderManager:
         Enhanced trailing stop that tracks BOTH loss protection AND profit locking.
         Activates when position reaches TRAILING_STOP_ACTIVATION_PCT profit.
         Locks in profits by trailing below highest price since activation.
-        
-        Args:
-            order_id: Order ID
-            pos: Position dictionary
-            current_price: Current market price
         """
         try:
             symbol = pos.get("symbol", "")
@@ -1508,19 +1488,42 @@ class OrderManager:
 
             # ---------- DB (lazy load) ----------
             try:
-                trade_id = pos.get("trade_id")
-                if trade_id:
-                    _load_db_utils()  # Ensure DB is loaded
-                    if DB_INTEGRATION and close_trade:
-                        try:
-                            close_trade(trade_id, exit_price, net_pnl)
-                            logger.debug(
-                                f"🗄️ DB closed: {symbol}, gross=${gross_pnl:.4f}, net=${net_pnl:.4f}"
-                            )
-                        except Exception as e:
-                            logger.error(f"❌ DB close_trade failed for {symbol}: {e}")
+                trade_id_raw = pos.get("trade_id")
+                
+                # Convert to int safely
+                if trade_id_raw is None:
+                    logger.warning(f"⚠️ No trade_id found for position {order_id} ({symbol}) — skipping DB close")
+                else:
+                    try:
+                        trade_id = int(trade_id_raw)
+                        if trade_id <= 0:
+                            raise ValueError("trade_id must be positive")
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"❌ Invalid trade_id format: {trade_id_raw} (type: {type(trade_id_raw)}) — cannot close in DB")
+                        trade_id = None
+
+                    if trade_id:
+                        _load_db_utils()  # Ensure DB is loaded
+                        if DB_INTEGRATION and close_trade:
+                            try:
+                                success = close_trade(
+                                    trade_id=trade_id,
+                                    exit_price=float(exit_price),
+                                    pnl=float(net_pnl),
+                                    comment=reason
+                                )
+                                if success:
+                                    logger.success(f"✅ Trade ID {trade_id} for {symbol} successfully closed in database")
+                                else:
+                                    logger.error(f"❌ close_trade returned False for trade_id={trade_id}, symbol={symbol}")
+                            except Exception as e:
+                                logger.error(f"💥 Exception calling close_trade for {symbol}: {e}")
+                                logger.error(traceback.format_exc())
+                        else:
+                            logger.warning("⚠️ DB_INTEGRATION disabled or close_trade not available")
             except Exception as e:
                 logger.warning(f"⚠️ Failed to update database for {symbol}: {e}")
+                logger.error(traceback.format_exc())
 
             # ---------- Cleanup ----------
             try:
@@ -1628,9 +1631,6 @@ class OrderManager:
     def monitor_positions(self, indicators_provider=None) -> None:
         """
         Monitor all active positions for SL/TP hits and trailing updates with comprehensive error handling.
-        
-        Args:
-            indicators_provider: Optional function to provide technical indicators for momentum exits
         """
         try:
             if not self.active_orders:

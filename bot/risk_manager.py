@@ -57,11 +57,11 @@ class EnhancedRiskManager:
         # AUTO FLIP CONFIGURATION
         # -------------------------------------------------------------
         self.auto_flip_enabled: bool = self._get_config(section, "AUTO_FLIP_ENABLED", True, bool)
-        self.auto_flip_min_loss_pct: float = self._get_config(section, "AUTO_FLIP_MIN_LOSS_PCT", 0.3, float)  # ←_CHANGED_TO_0.3
+        self.auto_flip_min_loss_pct: float = self._get_config(section, "AUTO_FLIP_MIN_LOSS_PCT", 0.3, float)
         self.auto_flip_min_signal_strength: int = self._get_config(section, "AUTO_FLIP_MIN_SIGNAL_STRENGTH", 85, int)
-        self.auto_flip_cooldown_minutes: int = self._get_config(section, "AUTO_FLIP_COOLDOWN_MINUTES", 1, int)  # ←_CHANGED_TO_1
-        self.auto_flip_min_movement_pct: float = self._get_config(section, "AUTO_FLIP_MIN_MOVEMENT_PCT", 0.1, float)  # ←_ADDED
-        self.auto_enhance_threshold: float = self._get_config(section, "AUTO_ENHANCE_THRESHOLD", 5.0, float)  # ←_ADDED
+        self.auto_flip_cooldown_minutes: int = self._get_config(section, "AUTO_FLIP_COOLDOWN_MINUTES", 1, int)
+        self.auto_flip_min_movement_pct: float = self._get_config(section, "AUTO_FLIP_MIN_MOVEMENT_PCT", 0.1, float)
+        self.auto_enhance_threshold: float = self._get_config(section, "AUTO_ENHANCE_THRESHOLD", 5.0, float)
 
         if self.auto_flip_enabled:
             logger.info(
@@ -275,138 +275,159 @@ class EnhancedRiskManager:
     def can_open_trade(self,symbol: str,size_usdt: float,side: str = "BUY",signal: Optional[Dict[str, Any]] = None,) -> bool:
         """
         Check all conditions before opening a trade.
-        Now includes signal quality validation!
+        Now includes signal quality validation and strict position counting.
+        Enforces MAX_TOTAL_POSITIONS even when dynamic limits are disabled.
         """
-        self._reset_daily_if_needed()
-        self._update_drawdown()
+        try:
+            self._reset_daily_if_needed()
+            self._update_drawdown()
 
-        side_up = side.upper()
+            side_up = side.upper()
 
-        # ---------------------------------------------------------
-        # 1. SIGNAL QUALITY CHECK (NEW - MOST IMPORTANT!)
-        # ---------------------------------------------------------
-        if signal:
-            quality_check = self.validate_signal_quality(signal)
-            if not quality_check["approved"]:
-                return False
+            # ---------------------------------------------------------
+            # 1. SIGNAL QUALITY CHECK
+            # ---------------------------------------------------------
+            if signal:
+                quality_check = self.validate_signal_quality(signal)
+                if not quality_check["approved"]:
+                    logger.debug(f"❌ {symbol} blocked by signal quality filter")
+                    return False
 
-        # ---------------------------------------------------------
-        # 2. SIZE LIMITS
-        # ---------------------------------------------------------
-        if size_usdt < self.min_position_usdt:
-            logger.warning(
-                f"🚫 {symbol} size too small: ${size_usdt:.2f} < ${self.min_position_usdt:.2f}"
-            )
-            return False
-
-        if size_usdt > self.max_position_usdt:
-            logger.warning(
-                f"🚫 {symbol} size too large: ${size_usdt:.2f} > ${self.max_position_usdt:.2f}"
-            )
-            return False
-
-        # ---------------------------------------------------------
-        # 3. EMERGENCY CONDITIONS
-        # ---------------------------------------------------------
-        if self.should_close_all_positions():
-            logger.warning(f"🚫 {symbol} trade blocked: Emergency conditions active")
-            return False
-
-        # ---------------------------------------------------------
-        # 4. BUY/SELL PERMISSIONS
-        # ---------------------------------------------------------
-        if side_up == "SELL" and not self.allow_sell_positions:
-            logger.warning(f"🚫 {symbol} SELL blocked (ALLOW_SELL_POSITIONS=false)")
-            return False
-
-        if side_up == "BUY" and not self.allow_buy_positions:
-            logger.warning(f"🚫 {symbol} BUY blocked (ALLOW_BUY_POSITIONS=false)")
-            return False
-
-        # ---------------------------------------------------------
-        # 5. PER-SYMBOL LIMIT
-        # ---------------------------------------------------------
-        current_positions = self.positions_by_symbol.get(symbol, 0)
-        if current_positions >= self.max_positions_per_symbol:
-            # Try to find conflicting position to flip
-            if signal and self.auto_flip_enabled:
-                current_price = signal.get("price", 0)
-                signal_strength = signal.get("strength", 0)
-                
-                if current_price > 0:
-                    order_to_flip = self.should_flip_position(symbol, side, signal_strength, current_price)
-                    if order_to_flip:
-                        logger.warning(
-                            f"⚠️ {symbol}: Conflicting position exists — flip required before opening new trade"
-                        )
-                        return False  # Block until flip is done externally
-            
-            logger.info(
-                f"ℹ️ {symbol} already has {current_positions}/{self.max_positions_per_symbol} positions (no valid flip found)"
-            )
-            return False
-
-        # ---------------------------------------------------------
-        # 6. DYNAMIC GLOBAL POSITION LIMIT
-        # ---------------------------------------------------------
-        current_equity = self._get_balance()
-        limit_to_use = self.max_total_positions
-
-        if self.use_dynamic_position_limits and current_equity > 0:
-            if current_equity < 50:
-                limit_to_use = min(self.max_total_positions, 6)
-            elif current_equity < 100:
-                limit_to_use = min(self.max_total_positions, 8)
-            elif current_equity < 250:
-                limit_to_use = min(self.max_total_positions, 10)
-            elif current_equity < 500:
-                limit_to_use = min(self.max_total_positions, 12)
-            logger.debug(f"📊 Dynamic position limit applied: {limit_to_use} (equity=${current_equity:.2f})")
-
-        total = sum(self.positions_by_symbol.values())
-        if total >= limit_to_use:
-            reason = "[Dynamic limit]" if self.use_dynamic_position_limits else "[Static limit]"
-            logger.info(
-                f"ℹ️  Max total positions reached ({total}/{limit_to_use}) {reason}"
-            )
-            return False
-
-        # ---------------------------------------------------------
-        # 7. COOLDOWN CHECK
-        # ---------------------------------------------------------
-        last_time = self.last_trade_time.get(symbol, datetime.min.replace(tzinfo=timezone.utc))
-        delta = datetime.now(timezone.utc) - last_time
-        cooldown_seconds = self.position_cooldown_minutes * 60
-        remaining = cooldown_seconds - delta.total_seconds()
-        if remaining > 0:
-            logger.debug(f"⏳ {symbol} in cooldown: {remaining:.0f}s remaining")
-            return False
-
-        # ---------------------------------------------------------
-        # 8. DAILY LOSS LIMIT
-        # ---------------------------------------------------------
-        if self.daily_stats["start_balance"] > 0:
-            daily_loss_pct = (
-                abs(min(0, self.daily_stats["daily_pnl"]))
-                / self.daily_stats["start_balance"]
-            ) * 100
-            if daily_loss_pct >= self.max_daily_loss_pct:
+            # ---------------------------------------------------------
+            # 2. SIZE LIMITS
+            # ---------------------------------------------------------
+            if size_usdt < self.min_position_usdt:
                 logger.warning(
-                    f"🚫 Daily loss limit reached: {daily_loss_pct:.2f}% >= {self.max_daily_loss_pct:.2f}%"
+                    f"🚫 {symbol} size too small: ${size_usdt:.2f} < ${self.min_position_usdt:.2f}"
                 )
                 return False
 
-        # ---------------------------------------------------------
-        # 9. LOSS STREAK PROTECTION
-        # ---------------------------------------------------------
-        if self.loss_streak >= 3:
-            logger.warning(
-                f"⚠️ {symbol} on loss streak ({self.loss_streak}) - extra caution applied"
-            )
+            if size_usdt > self.max_position_usdt:
+                logger.warning(
+                    f"🚫 {symbol} size too large: ${size_usdt:.2f} > ${self.max_position_usdt:.2f}"
+                )
+                return False
 
-        logger.debug(f"✅ {symbol} {side} trade approved by RiskManager")
-        return True
+            # ---------------------------------------------------------
+            # 3. EMERGENCY CONDITIONS
+            # ---------------------------------------------------------
+            if self.should_close_all_positions():
+                logger.warning(f"🚫 {symbol} trade blocked: Emergency conditions active")
+                return False
 
+            # ---------------------------------------------------------
+            # 4. BUY/SELL PERMISSIONS
+            # ---------------------------------------------------------
+            if side_up == "SELL" and not self.allow_sell_positions:
+                logger.warning(f"🚫 {symbol} SELL blocked (ALLOW_SELL_POSITIONS=false)")
+                return False
+
+            if side_up == "BUY" and not self.allow_buy_positions:
+                logger.warning(f"🚫 {symbol} BUY blocked (ALLOW_BUY_POSITIONS=false)")
+                return False
+
+            # ---------------------------------------------------------
+            # 5. PER-SYMBOL LIMIT
+            # ---------------------------------------------------------
+            current_positions = self.positions_by_symbol.get(symbol, 0)
+            if current_positions >= self.max_positions_per_symbol:
+                if signal and self.auto_flip_enabled:
+                    current_price = signal.get("price", 0)
+                    signal_strength = signal.get("strength", 0)
+                    if current_price > 0:
+                        order_to_flip = self.should_flip_position(symbol, side, signal_strength, current_price)
+                        if order_to_flip:
+                            logger.warning(
+                                f"⚠️ {symbol}: Conflicting position exists — flip required before opening new trade"
+                            )
+                            return False
+                logger.info(
+                    f"ℹ️ {symbol} already has {current_positions}/{self.max_positions_per_symbol} positions (no valid flip found)"
+                )
+                return False
+
+            # ---------------------------------------------------------
+            # 6. GLOBAL POSITION LIMIT — FIXED LOGIC
+            # ---------------------------------------------------------
+            # Calculate actual active positions (only those with remaining_qty > 0)
+            active_positions = [
+                p for p in self.open_positions.values() 
+                if p.get("remaining_qty", 0) > 0
+            ]
+            actual_position_count = len(active_positions)
+
+            # Validate integrity between open_positions and positions_by_symbol
+            counted_by_symbol = sum(self.positions_by_symbol.values())
+            if actual_position_count != counted_by_symbol:
+                logger.critical(
+                    f"🚨 Position count mismatch! "
+                    f"Active Orders: {actual_position_count}, "
+                    f"Symbol Count: {counted_by_symbol} — "
+                    f"TRUSTING ACTIVE ORDERS COUNT."
+                )
+
+            # Determine limit to use
+            limit_to_use = self.max_total_positions
+            current_equity = self._get_balance()
+
+            if self.use_dynamic_position_limits and current_equity > 0:
+                if current_equity < 50:
+                    limit_to_use = min(self.max_total_positions, 6)
+                elif current_equity < 100:
+                    limit_to_use = min(self.max_total_positions, 8)
+                elif current_equity < 250:
+                    limit_to_use = min(self.max_total_positions, 10)
+                elif current_equity < 500:
+                    limit_to_use = min(self.max_total_positions, 12)
+                logger.debug(f"📊 Dynamic position limit applied: {limit_to_use} (equity=${current_equity:.2f})")
+
+            # Enforce limit
+            if actual_position_count >= limit_to_use:
+                reason = "[Dynamic]" if self.use_dynamic_position_limits else "[Static]"
+                logger.info(
+                    f"⏭️ Portfolio full ({actual_position_count}/{limit_to_use}) {reason} — blocking {symbol} {side_up}"
+                )
+                return False
+
+            # ---------------------------------------------------------
+            # 7. COOLDOWN CHECK
+            # ---------------------------------------------------------
+            last_time = self.last_trade_time.get(symbol, datetime.min.replace(tzinfo=timezone.utc))
+            delta = datetime.now(timezone.utc) - last_time
+            cooldown_seconds = self.position_cooldown_minutes * 60
+            remaining = cooldown_seconds - delta.total_seconds()
+            if remaining > 0:
+                logger.debug(f"⏳ {symbol} in cooldown: {remaining:.0f}s remaining")
+                return False
+
+            # ---------------------------------------------------------
+            # 8. DAILY LOSS LIMIT
+            # ---------------------------------------------------------
+            if self.daily_stats["start_balance"] > 0:
+                daily_loss_pct = (
+                    abs(min(0, self.daily_stats["daily_pnl"]))
+                    / self.daily_stats["start_balance"]
+                ) * 100
+                if daily_loss_pct >= self.max_daily_loss_pct:
+                    logger.warning(
+                        f"🚫 Daily loss limit reached: {daily_loss_pct:.2f}% >= {self.max_daily_loss_pct:.2f}%"
+                    )
+                    return False
+
+            # ---------------------------------------------------------
+            # 9. LOSS STREAK PROTECTION
+            # ---------------------------------------------------------
+            if self.loss_streak >= 3:
+                logger.warning(
+                    f"⚠️ {symbol} on loss streak ({self.loss_streak}) - extra caution applied"
+                )
+
+            logger.debug(f"✅ {symbol} {side} trade approved by RiskManager")
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Unexpected error in can_open_trade for {symbol}: {e}")
+            return False
     # =================================================================
     # FLIP POSITION
     # =================================================================
