@@ -1,6 +1,6 @@
 # emergency_exit_manager.py
 """
-🚨 Emergency Exit Manager - Advanced Protection System
+Emergency Exit Manager - Advanced Protection System
 
 Features:
 1. Percentage-based loss exit (e.g., close if -2% from entry)
@@ -12,14 +12,12 @@ Features:
 7. Maximum position age exit
 8. Momentum-specific exit conditions
 """
-
 import time
 import traceback
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timezone
 from loguru import logger
 from config_loader import get_config_loader
-
 
 class EmergencyExitManager:
     """
@@ -30,9 +28,6 @@ class EmergencyExitManager:
     def __init__(self, session=None, order_manager=None):
         """
         Initialize the Emergency Exit Manager.
-        
-        :param session: BybitSession instance for fetching positions and prices
-        :param order_manager: OrderManager instance for executing closes
         """
         self.session = session
         self.order_manager = order_manager
@@ -42,7 +37,7 @@ class EmergencyExitManager:
         section = "emergency_exit"
 
         # ============================================
-        # 📉 Percentage Loss Exit
+        #  Percentage Loss Exit
         # ============================================
         self.enable_pct_loss_exit: bool = cfg.get(
             section, "ENABLE_PCT_LOSS_EXIT", True, bool
@@ -52,7 +47,7 @@ class EmergencyExitManager:
         )
 
         # ============================================
-        # 💀 Liquidation Distance Protection
+        #  Liquidation Distance Protection
         # ============================================
         self.enable_liq_protection: bool = cfg.get(
             section, "ENABLE_LIQ_PROTECTION", True, bool
@@ -62,7 +57,7 @@ class EmergencyExitManager:
         )
 
         # ============================================
-        # 🛡️ Missing SL/TP Recovery
+        #  Missing SL/TP Recovery
         # ============================================
         self.enable_missing_sltp_exit: bool = cfg.get(
             section, "ENABLE_MISSING_SLTP_EXIT", True, bool
@@ -72,7 +67,7 @@ class EmergencyExitManager:
         )
 
         # ============================================
-        # ⏰ Time-Based Trailing (tighten SL over time)
+        #  Time-Based Trailing (tighten SL over time)
         # ============================================
         self.enable_time_trailing: bool = cfg.get(
             section, "ENABLE_TIME_TRAILING", False, bool
@@ -82,7 +77,7 @@ class EmergencyExitManager:
         )
 
         # ============================================
-        # 🌊 Account Equity Drawdown Protection
+        #  Account Equity Drawdown Protection
         # ============================================
         self.enable_equity_drawdown_exit: bool = cfg.get(
             section, "ENABLE_EQUITY_DRAWDOWN_EXIT", True, bool
@@ -92,7 +87,7 @@ class EmergencyExitManager:
         )
 
         # ============================================
-        # 💸 Funding Cost Protection
+        #  Funding Cost Protection
         # ============================================
         self.enable_funding_protection: bool = cfg.get(
             section, "ENABLE_FUNDING_PROTECTION", True, bool
@@ -102,7 +97,7 @@ class EmergencyExitManager:
         )
 
         # ============================================
-        # ⏱️ Maximum Position Age
+        # ⏱ Maximum Position Age
         # ============================================
         self.enable_max_age_exit: bool = cfg.get(
             section, "ENABLE_MAX_AGE_EXIT", False, bool
@@ -112,7 +107,7 @@ class EmergencyExitManager:
         )
 
         # ============================================
-        # 🚀 Momentum-Specific Settings
+        #  Momentum-Specific Settings
         # ============================================
         self.momentum_max_loss_pct: float = cfg.get(
             section, "MOMENTUM_MAX_LOSS_PCT", 1.5, float
@@ -122,7 +117,7 @@ class EmergencyExitManager:
         )
 
         # ============================================
-        # 📊 Internal State
+        #  Internal State
         # ============================================
         self.last_equity_peak: Optional[float] = None
         self.exit_cooldown: Dict[str, float] = {}  # symbol -> last exit timestamp
@@ -140,14 +135,12 @@ class EmergencyExitManager:
         )
 
     # ================================================================
-    # 🔧 Helper: Parse time trailing config
+    #  Helper: Parse time trailing config
     # ================================================================
     def _parse_time_trailing(self, raw: str) -> List[Dict[str, float]]:
         """
         Parse format: "30:1.5,60:1.0,120:0.5"
         → [{"minutes": 30, "sl_multiplier": 1.5}, ...]
-        
-        Each interval defines: after X minutes, SL should be Y * ATR from entry
         """
         try:
             if not raw or not isinstance(raw, str):
@@ -169,7 +162,7 @@ class EmergencyExitManager:
             return []
 
     # ================================================================
-    # 🔍 Helper: Get current price for symbol
+    #  Helper: Get current price for symbol
     # ================================================================
     def _get_current_price(self, symbol: str) -> Optional[float]:
         """Safely get current price for a symbol."""
@@ -185,14 +178,9 @@ class EmergencyExitManager:
         return None
 
     # ================================================================
-    # 📉 Check percentage loss from entry
+    #  Check percentage loss from entry
     # ================================================================
-    def _check_pct_loss(
-        self,
-        position: Dict[str, Any],
-        current_price: float,
-        is_momentum: bool = False
-    ) -> Optional[str]:
+    def _check_pct_loss(self,position: Dict[str, Any],current_price: float,is_momentum: bool = False) -> Optional[str]:
         """
         Returns close reason if loss exceeds threshold, else None.
         Uses different threshold for momentum trades.
@@ -225,13 +213,9 @@ class EmergencyExitManager:
         return None
 
     # ================================================================
-    # 💀 Check distance to liquidation price
+    #  Check distance to liquidation price
     # ================================================================
-    def _check_liquidation_distance(
-        self,
-        position: Dict[str, Any],
-        current_price: float
-    ) -> Optional[str]:
+    def _check_liquidation_distance(self,position: Dict[str, Any],current_price: float) -> Optional[str]:
         """
         Returns close reason if too close to liquidation, else None.
         """
@@ -264,13 +248,9 @@ class EmergencyExitManager:
         return None
 
     # ================================================================
-    # 🛡️ Check for missing SL/TP (timeout-based)
+    #  Check for missing SL/TP (timeout-based)
     # ================================================================
-    def _check_missing_sltp(
-        self,
-        position: Dict[str, Any],
-        active_orders: Dict[str, Dict]
-    ) -> Optional[str]:
+    def _check_missing_sltp(self,position: Dict[str, Any],active_orders: Dict[str, Dict]) -> Optional[str]:
         """
         Returns close reason if position has no SL/TP after timeout.
         Checks both internal tracking and exchange-level SL/TP.
@@ -319,18 +299,12 @@ class EmergencyExitManager:
                         f"SL/TP not confirmed (timeout={self.missing_sltp_timeout_minutes}m)"
                     )
 
-        # Position not in active_orders but on exchange without SL/TP
-        # This could be a manually opened position
         return None
 
     # ================================================================
-    # 💸 Check funding cost accumulation
+    #  Check funding cost accumulation
     # ================================================================
-    def _check_funding_cost(
-        self,
-        position: Dict[str, Any],
-        active_orders: Dict[str, Dict]
-    ) -> Optional[str]:
+    def _check_funding_cost(self,position: Dict[str, Any],active_orders: Dict[str, Dict]) -> Optional[str]:
         """
         Close position if cumulative funding fees eat into profit.
         Estimates funding based on position age.
@@ -359,8 +333,6 @@ class EmergencyExitManager:
         # Calculate hours held
         age_hours = (time.time() - opened_at) / 3600
 
-        # Estimate funding fees (0.01% per 8 hours is typical, can be positive or negative)
-        # For safety, we assume worst case (paying funding)
         funding_intervals = age_hours / 8
         estimated_funding_pct = funding_intervals * 0.01  # 0.01% per interval
 
@@ -373,14 +345,9 @@ class EmergencyExitManager:
         return None
 
     # ================================================================
-    # ⏱️ Check maximum position age
+    #  Check maximum position age
     # ================================================================
-    def _check_max_age(
-        self,
-        position: Dict[str, Any],
-        active_orders: Dict[str, Dict],
-        is_momentum: bool = False
-    ) -> Optional[str]:
+    def _check_max_age(self,position: Dict[str, Any],active_orders: Dict[str, Dict],is_momentum: bool = False) -> Optional[str]:
         """
         Close position if it's been open too long without hitting TP.
         Uses different threshold for momentum trades.
@@ -429,19 +396,11 @@ class EmergencyExitManager:
         return None
 
     # ================================================================
-    # ⏰ Time-based trailing (tighten SL based on position age)
+    #  Time-based trailing (tighten SL based on position age)
     # ================================================================
-    def _check_time_trailing(
-        self,
-        position: Dict[str, Any],
-        active_orders: Dict[str, Dict],
-        current_price: float
-    ) -> Optional[Dict[str, Any]]:
+    def _check_time_trailing(self,position: Dict[str, Any],active_orders: Dict[str, Dict],current_price: float) -> Optional[Dict[str, Any]]:
         """
         Returns new SL if time-based tightening is needed, else None.
-        
-        Returns:
-            {"symbol": str, "new_sl": float, "reason": str} or None
         """
         if not self.enable_time_trailing or not self.time_trailing_intervals:
             return None
@@ -523,7 +482,7 @@ class EmergencyExitManager:
         return None
 
     # ================================================================
-    # 🌊 Check account equity drawdown
+    #  Check account equity drawdown
     # ================================================================
     def _check_equity_drawdown(self, account: Dict[str, Any]) -> Optional[str]:
         """
@@ -556,7 +515,7 @@ class EmergencyExitManager:
         return None
 
     # ================================================================
-    # 🔒 Check exit cooldown (prevent rapid re-entry)
+    #  Check exit cooldown (prevent rapid re-entry)
     # ================================================================
     def _is_in_cooldown(self, symbol: str) -> bool:
         """Check if symbol is in exit cooldown period."""
@@ -572,29 +531,11 @@ class EmergencyExitManager:
         self.exit_cooldown[symbol] = time.time()
 
     # ================================================================
-    # 🚨 MAIN EVALUATION - Check all emergency conditions
+    #  MAIN EVALUATION - Check all emergency conditions
     # ================================================================
-    def evaluate_positions(
-        self,
-        positions: List[Dict[str, Any]],
-        account: Dict[str, Any],
-        active_orders: Optional[Dict[str, Dict]] = None
-    ) -> Dict[str, Any]:
+    def evaluate_positions(self,positions: List[Dict[str, Any]],account: Dict[str, Any],active_orders: Optional[Dict[str, Dict]] = None) -> Dict[str, Any]:
         """
         Evaluate all positions for emergency conditions.
-
-        Args:
-            positions: List of position dicts from exchange
-            account: Account info dict with equity, balance, etc.
-            active_orders: Dict of active orders from OrderManager
-
-        Returns:
-            {
-                "close_all": bool,
-                "close_symbols": [symbol1, symbol2, ...],
-                "tighten_sl": {symbol: {"new_sl": price, "side": str}, ...},
-                "reasons": {symbol: reason_str, ...}
-            }
         """
         if active_orders is None:
             active_orders = {}
@@ -695,22 +636,11 @@ class EmergencyExitManager:
         return result
 
     # ================================================================
-    # 🔧 Execute emergency actions (called by bot_main)
+    #  Execute emergency actions (called by bot_main)
     # ================================================================
-    def execute_emergency_actions(
-        self,
-        actions: Dict[str, Any],
-        positions: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def execute_emergency_actions(self,actions: Dict[str, Any],positions: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Execute the emergency actions determined by evaluate_positions.
-
-        Args:
-            actions: Result dict from evaluate_positions
-            positions: List of position dicts from exchange
-
-        Returns:
-            Summary of actions taken
         """
         summary = {
             "closed_all": False,
@@ -842,7 +772,7 @@ class EmergencyExitManager:
         return summary
 
     # ================================================================
-    # 📊 Get current status/stats
+    #  Get current status/stats
     # ================================================================
     def get_status(self) -> Dict[str, Any]:
         """Get current status of the emergency exit manager."""
