@@ -1,7 +1,6 @@
-# watchdog/watchdog.py - Enhanced Bot Monitor
+# watchdog/watchdog.py
 """
-🐶 Watchdog Service - Bot Health Monitor
-
+Watchdog Service - Bot Health Monitor
 Monitors the trading bot via heartbeat checks and automatically
 restarts if the bot appears stuck or unresponsive.
 
@@ -52,7 +51,7 @@ DB_USER = os.getenv("DB_USER", os.getenv("POSTGRES_USER", "trader"))
 DB_PASS = os.getenv("DB_PASS", os.getenv("POSTGRES_PASSWORD", "trader_pass"))
 
 # Thresholds
-MAX_HEARTBEAT_AGE_SEC = int(os.getenv("WATCHDOG_MAX_AGE", "300"))  # 5 min
+MAX_HEARTBEAT_AGE_SEC = int(os.getenv("WATCHDOG_MAX_AGE", "300"))
 CHECK_INTERVAL_SEC = int(os.getenv("WATCHDOG_CHECK_INTERVAL", "60"))
 MAX_STUCK_CYCLES = int(os.getenv("WATCHDOG_MAX_STUCK_CYCLES", "3"))
 MAX_DB_ERRORS = int(os.getenv("WATCHDOG_MAX_DB_ERRORS", "5"))
@@ -83,7 +82,7 @@ class WatchdogState:
         self.total_restarts = 0
         self.total_alerts = 0
         self.start_time = time.time()
-        self.table_exists = False  # Track if table was verified
+        self.table_exists = False
         self.no_heartbeat_warnings = 0  # Track consecutive no-heartbeat warnings
         
         # Alert cooldown
@@ -166,14 +165,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 # ─────────────────────────────────────────────────────
 def send_alert(msg: str, force: bool = False) -> bool:
     """
-    Send alert via Telegram.
-    
-    Args:
-        msg: Alert message
-        force: If True, bypass cooldown
-        
-    Returns:
-        True if sent successfully
+    Send alert via Telegram
     """
     # Check cooldown
     if not force and not state.can_send_alert():
@@ -302,9 +294,6 @@ def wait_for_db(max_retries: int = 30, delay: int = 2) -> bool:
 def ensure_heartbeat_table() -> bool:
     """
     Create the bot_heartbeat table if it doesn't exist.
-    
-    Returns:
-        True if table exists or was created successfully
     """
     create_sql = """
     CREATE TABLE IF NOT EXISTS bot_heartbeat (
@@ -367,9 +356,6 @@ def check_table_exists() -> bool:
 def get_latest_heartbeat() -> Optional[Dict[str, Any]]:
     """
     Fetch the latest heartbeat from database.
-    
-    Returns:
-        Dict with heartbeat data or None if not found
     """
     # Ensure table exists before querying
     if not state.table_exists:
@@ -453,9 +439,6 @@ def get_heartbeat_count() -> int:
 def restart_trading_bot() -> bool:
     """
     Restart the trading bot via Docker.
-    
-    Returns:
-        True if restart was initiated
     """
     if not AUTO_RESTART_ENABLED:
         logger.info("ℹ️ Auto-restart disabled, skipping")
@@ -511,10 +494,7 @@ def restart_trading_bot() -> bool:
 # ─────────────────────────────────────────────────────
 def check_heartbeat_age(hb: Dict[str, Any]) -> Optional[str]:
     """
-    Check if heartbeat is too old.
-    
-    Returns:
-        Alert message if too old, None if OK
+    Check if heartbeat is too old
     """
     now = datetime.now(timezone.utc)
     hb_time = hb["timestamp"]
@@ -546,9 +526,6 @@ def check_heartbeat_age(hb: Dict[str, Any]) -> Optional[str]:
 def check_stuck_cycle(hb: Dict[str, Any]) -> Optional[str]:
     """
     Check if bot is stuck on the same cycle.
-    
-    Returns:
-        Alert message if stuck, None if OK
     """
     current_cycle = hb["cycle_count"]
     
@@ -581,9 +558,6 @@ def check_stuck_cycle(hb: Dict[str, Any]) -> Optional[str]:
 def check_error_status(hb: Dict[str, Any]) -> Optional[str]:
     """
     Check if bot is in error status.
-    
-    Returns:
-        Alert message if error, None if OK
     """
     status = hb.get("status", "").lower()
     
@@ -605,9 +579,6 @@ def check_error_status(hb: Dict[str, Any]) -> Optional[str]:
 def run_health_check() -> bool:
     """
     Run a single health check iteration.
-    
-    Returns:
-        True if bot is healthy, False otherwise
     """
     hb = get_latest_heartbeat()
 

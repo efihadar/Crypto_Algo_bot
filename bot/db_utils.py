@@ -61,7 +61,7 @@ def get_connection(retries: int = MAX_RETRIES):
                 keepalives_count=KEEPALIVE_COUNT,
                 application_name="trading_bot"
             )
-            logger.debug(f"✅ Database connection established (attempt {attempt + 1})")
+            logger.success(f"✅ Database connection established (attempt {attempt + 1})")
             break
             
         except psycopg2.OperationalError as e:
@@ -86,14 +86,13 @@ def get_connection(retries: int = MAX_RETRIES):
         if conn:
             try:
                 conn.close()
-                logger.debug("🔌 Database connection closed gracefully")
+                logger.debug("✅ Database connection closed gracefully")
             except Exception as e:
                 logger.warning(f"⚠️ Failed to close DB connection: {e}")
 
 def check_connection() -> bool:
     """
     Verify database connectivity with minimal overhead.
-    Returns True if connection is healthy, False otherwise.
     """
     try:
         with get_connection(retries=1) as conn:

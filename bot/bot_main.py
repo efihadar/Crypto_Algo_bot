@@ -788,8 +788,6 @@ def calculate_dynamic_position_size(symbol: str, balance: float, equity: float, 
 def initialize_bot() -> bool:
     """
     Initialize all bot components for all accounts with comprehensive error handling.
-    Returns:
-        True if initialization successful, False otherwise
     """
     global session, strategy, risk, order_manager, smart_safety, emergency_exit
     global reporter, heartbeat, multi_account, ml_manager, loader
@@ -1197,7 +1195,6 @@ def initialize_bot() -> bool:
             walk_forward_tester = None
         
         # Summary of advanced managers
-        logger.info("")
         logger.success("📊 Advanced Managers Status:")
         logger.info(f"   Correlation:  {'✅ Active' if correlation_manager else '❌ Inactive'}")
         logger.info(f"   Time Stops:   {'✅ Active' if time_stop_manager else '❌ Inactive'}")
@@ -1208,7 +1205,6 @@ def initialize_bot() -> bool:
         # ═══════════════════════════════════════════════════════════════
         # 18. FINAL SUMMARY
         # ═══════════════════════════════════════════════════════════════
-        logger.info("")
         logger.info("=" * 70)
         logger.success("✅ BOT INITIALIZATION COMPLETE")
         logger.info("=" * 70)
@@ -1230,11 +1226,11 @@ def initialize_bot() -> bool:
                     info = acc_session.get_account_info()
                     balance = info.get("balance", 0) if info else 0
                     equity = info.get("equity", 0) if info else 0
-                    logger.info(f"      • {acc_name}: ${balance:.2f} (Equity: ${equity:.2f}) [{config_file}]")
+                    logger.info(f"     • {acc_name}: ${balance:.2f} (Equity: ${equity:.2f}) [{config_file}]")
                 except Exception:
-                    logger.info(f"      • {acc_name} [{config_file}]")
+                    logger.info(f"     • {acc_name} [{config_file}]")
             else:
-                logger.info(f"      • {acc_name} [{config_file}] (no session)")
+                logger.info(f"     • {acc_name} [{config_file}] (no session)")
 
         # ═══════════════════════════════════════════════════════════════
         # 19. Send startup notification

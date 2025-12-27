@@ -49,18 +49,36 @@ def filter_symbols_elite(tickers_data: List[Dict[str, Any]], min_qtys: Dict[str,
     config = configparser.ConfigParser()
     config.read(INI_FILE_PATH)
 
-    # --- DYNAMIC QUALITY THRESHOLDS FROM INI ---
-    # These will now look for keys in your [momentum_trading] section
     MIN_TURNOVER = config.getfloat("momentum_trading", "MIN_VOLUME_USDT", fallback=5000000.0)
     MIN_CHANGE = config.getfloat("momentum_trading", "MIN_MOMENTUM_PCT", fallback=4.0)
     MAX_CHANGE = config.getfloat("momentum_trading", "MAX_MOMENTUM_PCT", fallback=25.0)
+    
+    SAFE_SYMBOLS = {
+    'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT',
+    'ADAUSDT', 'SUIUSDT', 'LINKUSDT', 'BNBUSDT', 'HYPEUSDT',
+    'WIFUSDT', 'BCHUSDT', 'AVAXUSDT', 'DOTUSDT', 'LTCUSDT',
+    'ATOMUSDT', 'ETCUSDT', 'UNIUSDT', 'AAVEUSDT', 'MATICUSDT',
+    'NEARUSDT', 'ARBUSDT', 'OPUSDT', 'APTUSDT', 'INJUSDT'
+    }
+    
+    BLACKLIST = {
+        'ZKPUSDT', 'BEATUSDT', 'LIGHTUSDT', 'PIPPINUSDT', 
+        'FARTCOINUSDT', 'ZBTUSDT', '0GUSDT', 'NIGHTUSDT',
+        'RAVEUSDT', 'XAUTUSDT'
+    }
     
     trading_candidates = []
     momentum_candidates = []
 
     for ticker in tickers_data:
         symbol = ticker.get('symbol', '')
-        if not symbol.endswith('USDT'): continue
+        if not symbol.endswith('USDT'): 
+            continue
+        
+        if symbol in BLACKLIST:
+            continue
+        if symbol not in SAFE_SYMBOLS:
+            continue
 
         try:
             last_price = float(ticker.get('lastPrice', 0))
@@ -68,27 +86,25 @@ def filter_symbols_elite(tickers_data: List[Dict[str, Any]], min_qtys: Dict[str,
             price_change_pct = float(ticker.get('price24hPcnt', 0))
             min_qty = min_qtys.get(symbol, 0)
 
-            # Check if we can afford the minimum entry
-            if (min_qty * last_price) > budget: continue
+            if (min_qty * last_price) > budget: 
+                continue
+            if turnover_24h < MIN_TURNOVER: 
+                continue
 
-            # Quality Filter: turnover must be higher than INI setting
-            if turnover_24h < MIN_TURNOVER: continue
-
-            # Regular Trading Category
+            # Regular Trading
             if turnover_24h > 20_000_000:
                 trading_candidates.append({'symbol': symbol, 'vol': turnover_24h})
 
-            # Momentum Category (The "Boom" Logic)
+            # Momentum
             if MIN_CHANGE <= price_change_pct <= MAX_CHANGE:
-                # Rank by price velocity and volume weight
                 score = price_change_pct * (turnover_24h / 1_000_000)
                 momentum_candidates.append({'symbol': symbol, 'score': score})
 
         except (ValueError, TypeError):
             continue
 
-    final_trading = [s['symbol'] for s in sorted(trading_candidates, key=lambda x: x['vol'], reverse=True)[:20]]
-    final_momentum = [s['symbol'] for s in sorted(momentum_candidates, key=lambda x: x['score'], reverse=True)[:15]]
+    final_trading = [s['symbol'] for s in sorted(trading_candidates, key=lambda x: x['vol'], reverse=True)[:15]]
+    final_momentum = [s['symbol'] for s in sorted(momentum_candidates, key=lambda x: x['score'], reverse=True)[:10]]
 
     return final_trading, final_momentum
 
