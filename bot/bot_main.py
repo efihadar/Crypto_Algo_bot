@@ -19,7 +19,7 @@ from loguru import logger
 from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from datetime import datetime, timezone
 from heartbeat_manager import HeartbeatManager
-from db_utils import insert_signal
+from db_utils import record_metrics, record_execution, get_open_trades, insert_signal
 from smart_safety import SmartSafetyManager
 from sessions import BybitSession
 from get_symbols_list import run_update_process
@@ -144,18 +144,18 @@ try:
 
     # Database
     try:
-        from db_utils import (
-            init_tables,
-            get_connection,
-            record_execution,
-            record_metrics,
-            safe_record_metrics
-        )
-        DB_AVAILABLE = True
-        logger.success("✅ Database functions loaded")
+        from order_manager import record_execution
+        logger.success("✅ record_execution function imported successfully")
+    except ImportError as e:
+        logger.error(f"❌ Could not import record_execution: {e}")
+
+    # Ensure DB_AVAILABLE is properly set
+    try:
+        from order_manager import DB_INTEGRATION
+        DB_AVAILABLE = DB_INTEGRATION
+        logger.info(f"✅ Database availability fixed: DB_AVAILABLE = {DB_AVAILABLE}")
     except Exception as e:
-        logger.warning(f"⚠️ Database functions not available: {e}")
-        DB_AVAILABLE = False
+        logger.error(f"❌ Could not sync database availability: {e}")
 
     try:
         from correlation_manager import CorrelationManager
@@ -1113,7 +1113,6 @@ def initialize_bot() -> bool:
         # ═══════════════════════════════════════════════════════════════
         # 17. INITIALIZE ADVANCED MANAGERS (CORRELATION, TIME, REGIME)
         # ═══════════════════════════════════════════════════════════════
-        logger.info("")
         logger.info("=" * 70)
         logger.info("🔧 Initializing Advanced Trading Managers...")
         logger.info("=" * 70)
@@ -1814,13 +1813,6 @@ def _execute_trade_internal(signal: Dict[str, Any], is_momentum: bool = False) -
     """
     Internal unified trade execution logic with comprehensive validation and error handling.
     Handles both regular and momentum trades with conditional logic.
-    
-    Args:
-        signal: Trading signal dictionary with required fields
-        is_momentum: Whether this is a momentum trade
-        
-    Returns:
-        Trade result dictionary or None if failed
     """
     global risk, ml_manager
     

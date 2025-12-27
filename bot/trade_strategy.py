@@ -566,7 +566,7 @@ class EnhancedBybitStrategy:
     # =====================================================================
     def calculate_dynamic_stops(self, df: pd.DataFrame, signal_type: str, entry: float) -> Dict[str, Any]:
         """
-        🛡️ Professional ATR-Based Stop Loss & Take Profit
+        Professional ATR-Based Stop Loss & Take Profit
         Uses volatility-adaptive sizing with fallbacks and sanity checks.
         """
         try:
@@ -638,7 +638,7 @@ class EnhancedBybitStrategy:
     # =====================================================================
     def detect_momentum(self, symbol: str, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         """
-        🚀 Detect High-Momentum Breakouts with Multi-Factor Confirmation
+        Detect High-Momentum Breakouts with Multi-Factor Confirmation
         Uses dynamic 24h lookback, volume surge, and RSI cap for quality control.
         """
         if not self.momentum_enabled or symbol not in self.momentum_symbols:
@@ -746,7 +746,7 @@ class EnhancedBybitStrategy:
 
     def scan_for_momentum(self, force_scan: bool = False) -> List[Dict[str, Any]]:
         """
-        🔍 Scan all momentum symbols for breakout opportunities.
+        Scan all momentum symbols for breakout opportunities.
         Respects rate limits and scan intervals.
         """
         if not self.momentum_enabled:
@@ -818,7 +818,7 @@ class EnhancedBybitStrategy:
     # =====================================================================
     def analyze_symbol(self, symbol: str, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
         """
-        🧠 Comprehensive Symbol Analysis Engine
+        Comprehensive Symbol Analysis Engine
         Combines trend, momentum, volume, and breakout filters with institutional-grade scoring.
         NOW WITH ML INTEGRATION + EMERGENCY EXIT LOGIC!
         """
@@ -850,7 +850,7 @@ class EnhancedBybitStrategy:
                 else:
                     logger.debug(f"🔄 {symbol}: Processing ranging market (range scalping enabled)")
 
-                        # Add forced exit logic for open positions
+            # Add forced exit logic for open positions
             if hasattr(self, 'open_positions') and symbol in self.open_positions:
                 position = self.open_positions[symbol]
                 entry_price = float(position["entry_price"])
@@ -935,7 +935,7 @@ class EnhancedBybitStrategy:
                         "price": current_price,
                         "stop_loss": 0.0,
                         "take_profit": 0.0,
-                        "strength": 100.0,  # Force high priority for exits
+                        "strength": 100.0,
                         "reasons": exit_reasons,
                         "is_momentum": False,
                         "signal_type": "emergency_exit",
@@ -1180,7 +1180,7 @@ class EnhancedBybitStrategy:
     # =====================================================================
     def generate_signals(self) -> List[Dict[str, Any]]:
         """
-        🏭 Unified Signal Generation Pipeline
+        Unified Signal Generation Pipeline
         Combines momentum and regular signals with intelligent deduplication and ranking.
         """
         signals: List[Dict[str, Any]] = []

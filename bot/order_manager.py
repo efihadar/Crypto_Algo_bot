@@ -270,9 +270,7 @@ class OrderManager:
         
         return limits
 
-    def _fetch_position_base_price(
-        self, symbol: str, fallback_price: Optional[float] = None, side: Optional[str] = None
-    ) -> Tuple[Optional[float], Optional[str]]:
+    def _fetch_position_base_price(self, symbol: str, fallback_price: Optional[float] = None, side: Optional[str] = None) -> Tuple[Optional[float], Optional[str]]:
         """Fetch position base price with comprehensive error handling."""
         try:
             candidates = []
@@ -484,13 +482,13 @@ class OrderManager:
             is_long = side == 'BUY'
             entry_price = float(position_data.get('entry_price', current_price))
             
-            # 1. בדיקת זמן (Time-based Exit)
+            # 1. Time-based Exit
             opened_at = position_data.get('opened_at', time.time())
             age_minutes = (time.time() - opened_at) / 60
             if age_minutes > self.momentum_max_time_minutes:
                 exit_reasons.append(f"Time: {age_minutes:.1f}min > {self.momentum_max_time_minutes}min")
             
-            # 2. בדיקת אינדיקטורים (RSI & Volume)
+            # 2. Check RSI & Volume
             if indicators and self.momentum_exit_on_rsi_drop:
                 rsi = indicators.get('rsi')
                 if rsi:
@@ -543,7 +541,6 @@ class OrderManager:
                     if current_price >= trailing_stop:
                         exit_reasons.append(f"Trailing (Short): {current_price:.6f} >= {trailing_stop:.6f}")
             
-            # החזרת תוצאה
             if exit_reasons:
                 return True, " | ".join(exit_reasons)
             

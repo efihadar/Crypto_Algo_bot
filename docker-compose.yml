@@ -36,8 +36,8 @@ services:
         condition: service_healthy
     environment:
       - TZ=Asia/Jerusalem
-      - DB_HOST=postgres_db
-      - POSTGRES_HOST=postgres_db
+      - DB_HOST=crypto_postgres_db
+      - POSTGRES_HOST=crypto_postgres_db
       - DB_PORT=5432
       - DB_USER=${POSTGRES_USER:-trader}
       - DB_PASS=${POSTGRES_PASSWORD:-trader_pass}
@@ -78,8 +78,8 @@ services:
         condition: service_healthy
     environment:
       - TZ=Asia/Jerusalem
-      - DB_HOST=postgres_db
-      - POSTGRES_HOST=postgres_db
+      - DB_HOST=crypto_postgres_db
+      - POSTGRES_HOST=crypto_postgres_db
       - DB_PORT=5432
       - DB_USER=${POSTGRES_USER:-trader}
       - DB_PASS=${POSTGRES_PASSWORD:-trader_pass}
@@ -114,8 +114,8 @@ services:
       - telegram_reporter
     environment:
       - TZ=Asia/Jerusalem
-      - DB_HOST=postgres_db
-      - POSTGRES_HOST=postgres_db
+      - DB_HOST=crypto_postgres_db
+      - POSTGRES_HOST=crypto_postgres_db
       - DB_PORT=5432
       - DB_USER=${POSTGRES_USER:-trader}
       - DB_PASS=${POSTGRES_PASSWORD:-trader_pass}

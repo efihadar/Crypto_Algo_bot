@@ -234,12 +234,6 @@ class CacheManager:
     def clear(self, prefix: Optional[str] = None) -> int:
         """
         Clear cache entries.
-        
-        Args:
-            prefix: If provided, only clear keys starting with this prefix
-            
-        Returns:
-            Number of entries cleared
         """
         with self._lock:
             if prefix:
@@ -260,12 +254,6 @@ cache = CacheManager()
 def detect_asset_type(symbol: str) -> str:
     """
     Detect the type of asset from symbol.
-    
-    Args:
-        symbol: Trading symbol
-        
-    Returns:
-        Asset type ('crypto', 'unknown')
     """
     s = symbol.upper()
     crypto_markers = (
@@ -281,12 +269,6 @@ def detect_asset_type(symbol: str) -> str:
 def map_timeframe(tf: str) -> str:
     """
     Map human-readable timeframe to Bybit interval format.
-    
-    Args:
-        tf: Timeframe string (e.g., '15m', '1h', '4h')
-        
-    Returns:
-        Bybit interval string
     """
     mapping = {
         "1m": "1",
@@ -308,12 +290,6 @@ def map_timeframe(tf: str) -> str:
 def normalize_symbol(symbol: str) -> str:
     """
     Normalize symbol to Bybit format.
-    
-    Args:
-        symbol: Raw symbol
-        
-    Returns:
-        Normalized symbol with USDT suffix
     """
     s = symbol.upper().strip()
     if not s.endswith("USDT"):
@@ -360,16 +336,6 @@ def _make_request_with_retry(func,*args,max_retries: int = None,retry_delay: flo
 def get_candles(symbol: str,limit: int = 200,interval: str = "15",use_cache: bool = True,) -> Optional[pd.DataFrame]:
     """
     Fetch kline/candlestick data from Bybit.
-    
-    Args:
-        symbol: Trading symbol (e.g., "BTCUSDT" or "BTC")
-        limit: Number of candles to fetch (max 200)
-        interval: Bybit interval format ("1","5","15","60","240","D"...)
-        use_cache: Whether to use cached data if available
-        
-    Returns:
-        DataFrame with time, open, high, low, close, volume, turnover
-        or None on failure
     """
     client = client_manager.client
     if not client:
@@ -435,15 +401,6 @@ def get_candles(symbol: str,limit: int = 200,interval: str = "15",use_cache: boo
 def get_market_data(symbol: str,count: int = 200,timeframe: str = "15m",use_cache: bool = True,) -> Optional[pd.DataFrame]:
     """
     Convenience wrapper that accepts human-readable timeframe.
-    
-    Args:
-        symbol: Trading symbol
-        count: Number of candles
-        timeframe: Human-readable timeframe (e.g., '15m', '1h', '4h')
-        use_cache: Whether to use cache
-        
-    Returns:
-        DataFrame ready for strategy use
     """
     if detect_asset_type(symbol) != "crypto":
         logger.warning(f"⚠️ {symbol} not detected as crypto — skipping")
@@ -461,14 +418,6 @@ def get_market_data(symbol: str,count: int = 200,timeframe: str = "15m",use_cach
 def get_multi_timeframe_data(symbol: str,timeframes: List[str] = None,count: int = 100,) -> Dict[str, Optional[pd.DataFrame]]:
     """
     Fetch data for multiple timeframes at once.
-    
-    Args:
-        symbol: Trading symbol
-        timeframes: List of timeframes (default: ['15m', '1h', '4h'])
-        count: Number of candles per timeframe
-        
-    Returns:
-        Dict mapping timeframe to DataFrame
     """
     if timeframes is None:
         timeframes = ["15m", "1h", "4h"]
@@ -485,13 +434,6 @@ def get_multi_timeframe_data(symbol: str,timeframes: List[str] = None,count: int
 def get_current_price(symbol: str, use_cache: bool = True) -> Optional[float]:
     """
     Get the last traded price for a USDT Perpetual contract.
-    
-    Args:
-        symbol: Trading symbol
-        use_cache: Whether to use cached price
-        
-    Returns:
-        Current price as float or None
     """
     client = client_manager.client
     if not client:
@@ -535,12 +477,6 @@ def get_current_price(symbol: str, use_cache: bool = True) -> Optional[float]:
 def get_prices_batch(symbols: List[str]) -> Dict[str, Optional[float]]:
     """
     Get current prices for multiple symbols efficiently.
-    
-    Args:
-        symbols: List of trading symbols
-        
-    Returns:
-        Dict mapping symbol to price
     """
     client = client_manager.client
     if not client:
@@ -582,14 +518,6 @@ def get_prices_batch(symbols: List[str]) -> Dict[str, Optional[float]]:
 def get_24h_stats(symbol: str, use_cache: bool = True) -> Optional[Dict[str, float]]:
     """
     Get 24-hour statistics for a USDT Perpetual contract.
-    
-    Args:
-        symbol: Trading symbol
-        use_cache: Whether to use cached data
-        
-    Returns:
-        Dict with last_price, high_24h, low_24h, volume_24h, turnover_24h, price_change_pct
-        or None on failure
     """
     client = client_manager.client
     if not client:
@@ -646,19 +574,9 @@ def get_24h_stats(symbol: str, use_cache: bool = True) -> Optional[Dict[str, flo
 # ============================================================
 # 📚 ORDERBOOK
 # ============================================================
-def get_orderbook(
-    symbol: str,
-    limit: int = 25,
-) -> Optional[Dict[str, Any]]:
+def get_orderbook(symbol: str,limit: int = 25,) -> Optional[Dict[str, Any]]:
     """
     Get orderbook data for a symbol.
-    
-    Args:
-        symbol: Trading symbol
-        limit: Depth limit (1, 25, 50, 100, 200)
-        
-    Returns:
-        Dict with bids, asks, and spread info
     """
     client = client_manager.client
     if not client:
@@ -711,12 +629,6 @@ def get_orderbook(
 def get_funding_rate(symbol: str) -> Optional[Dict[str, Any]]:
     """
     Get current funding rate for a symbol.
-    
-    Args:
-        symbol: Trading symbol
-        
-    Returns:
-        Dict with funding_rate, next_funding_time, etc.
     """
     client = client_manager.client
     if not client:
@@ -752,19 +664,9 @@ def get_funding_rate(symbol: str) -> Optional[Dict[str, Any]]:
         logger.error(f"❌ get_funding_rate error for {symbol}: {e}")
         return None
 
-def get_funding_history(
-    symbol: str,
-    limit: int = 50,
-) -> Optional[List[Dict[str, Any]]]:
+def get_funding_history(symbol: str,limit: int = 50,) -> Optional[List[Dict[str, Any]]]:
     """
     Get historical funding rates.
-    
-    Args:
-        symbol: Trading symbol
-        limit: Number of records
-        
-    Returns:
-        List of funding rate records
     """
     client = client_manager.client
     if not client:
@@ -805,12 +707,6 @@ def get_funding_history(
 def get_available_symbols(status: str = "Trading") -> List[str]:
     """
     Get list of available trading symbols.
-    
-    Args:
-        status: Filter by status ('Trading', 'Settling', etc.)
-        
-    Returns:
-        List of symbol strings
     """
     client = client_manager.client
     if not client:
@@ -844,12 +740,6 @@ def get_available_symbols(status: str = "Trading") -> List[str]:
 def clear_cache(symbol: Optional[str] = None) -> int:
     """
     Clear cached data.
-    
-    Args:
-        symbol: If provided, only clear cache for this symbol
-        
-    Returns:
-        Number of cache entries cleared
     """
     if symbol:
         symbol = normalize_symbol(symbol)
@@ -864,9 +754,6 @@ def clear_cache(symbol: Optional[str] = None) -> int:
 def check_connection() -> bool:
     """
     Check if data feed connection is working.
-    
-    Returns:
-        True if connection is healthy
     """
     try:
         client = client_manager.client
@@ -886,9 +773,6 @@ def check_connection() -> bool:
 def get_data_feed_status() -> Dict[str, Any]:
     """
     Get comprehensive status of data feeds.
-    
-    Returns:
-        Dict with status information
     """
     return {
         "client": client_manager.get_status(),
