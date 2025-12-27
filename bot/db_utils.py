@@ -372,7 +372,6 @@ def insert_signal(symbol: str,direction: str,price: float,sl: float,tp: float,ti
 raw: Optional[Dict] = None) -> Optional[int]:
     """
     Insert a new trading signal with full validation and error handling.
-    Returns signal ID on success, None on failure.
     """
     try:
         if not symbol or not isinstance(symbol, str):
@@ -471,7 +470,6 @@ def record_execution(signal_id: Optional[int],symbol: str,direction: str,entry: 
     tp: Optional[float] = None,meta: Optional[Dict] = None,ticket: Optional[str] = None) -> Optional[int]:
     """
     Record a new trade execution (open position).
-    Returns trade ID on success, None on failure.
     """
     try:
         # Validate inputs
@@ -674,7 +672,6 @@ def close_trade(trade_id: int,exit_price: float,pnl: float,comment: Optional[str
 def get_trade_by_id(trade_id: int) -> Optional[Dict[str, Any]]:
     """
     Get a specific trade by ID with comprehensive error handling.
-    Returns: Trade dict or None
     """
     try:
         if not isinstance(trade_id, int) or trade_id <= 0:
@@ -716,7 +713,6 @@ def get_trade_by_id(trade_id: int) -> Optional[Dict[str, Any]]:
 def get_open_trades(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Retrieve all currently open trades with optional symbol filtering.
-    Returns empty list on failure or if no connection available.
     """
     start_time = time.time()
     
@@ -1096,7 +1092,6 @@ def safe_record_metrics(balance: float,equity: float,profit: float,margin: float
 def latest_metrics() -> Dict[str, Any]:
     """
     Retrieve the most recent account metrics snapshot.
-    Returns empty dict if no metrics found or on error.
     """
     start_time = time.time()
     
@@ -1133,7 +1128,6 @@ def latest_metrics() -> Dict[str, Any]:
 def get_metrics_history(hours: int = 24) -> List[Dict[str, Any]]:
     """
     Retrieve historical metrics for charting and analysis.
-    Returns metrics from specified time window ordered chronologically.
     """
     start_time = time.time()
     
@@ -1167,7 +1161,6 @@ def get_metrics_history(hours: int = 24) -> List[Dict[str, Any]]:
 def cleanup_old_metrics(days: int = 30) -> int:
     """
     Remove old metrics records to maintain database performance.
-    Returns number of records deleted.
     """
     start_time = time.time()
     
@@ -1203,7 +1196,6 @@ def cleanup_old_metrics(days: int = 30) -> int:
 # ============================================================
 # DAILY SUMMARY — BUSINESS INTELLIGENCE
 # ============================================================
-
 def update_daily_summary(date: Optional[datetime] = None,starting_balance: Optional[float] = None,ending_balance: Optional[float] = None,total_pnl: Optional[float] = None,
     total_trades: Optional[int] = None,winning_trades: Optional[int] = None,losing_trades: Optional[int] = None,max_drawdown: Optional[float] = None) -> bool:
     """
@@ -1315,16 +1307,10 @@ def get_daily_summaries(days: int = 30) -> List[Dict[str, Any]]:
 # ============================================================
 # CLEANUP / MAINTENANCE — DATABASE HYGIENE
 # ============================================================
-
-def cleanup_old_data(
-    heartbeat_days: int = 7,
-    metrics_days: int = 30,
-    signals_days: int = 30
-) -> Dict[str, int]:
+def cleanup_old_data(heartbeat_days: int = 7,metrics_days: int = 30,signals_days: int = 30) -> Dict[str, int]:
     """
     Comprehensive database cleanup to maintain optimal performance.
     Removes old records from all major tables based on retention policies.
-    Returns summary of cleanup operations.
     """
     start_time = time.time()
     logger.info("🧹 Starting comprehensive database cleanup...")
